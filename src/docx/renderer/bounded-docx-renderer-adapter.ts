@@ -10,6 +10,7 @@ import type {
 import { markDocxHeading } from "./docx-renderer-adapter";
 import { createDocxAttachmentButton, DOCX_ATTACHMENT_STYLES } from "../docx-attachment-controls";
 import type { DocxAttachment } from "../docx-attachments";
+import { DOCX_EQUATION_STYLES, renderDocxEquation, type DocxEquation } from "../docx-equations";
 import { createDocxMessageTranslator, type DocxMessageTranslator } from "../docx-messages";
 import { createDocxZoom } from "./docx-wheel-zoom";
 
@@ -58,18 +59,32 @@ function hyperlinkElement(
 function appendParagraphText(
   element: HTMLElement,
   paragraph: DocxSemanticParagraph,
+  equations: readonly DocxEquation[],
 ): void {
   let cursor = 0;
+  let next = 0;
+  const appendText = (end: number) => {
+    for (; next < equations.length; next += 1) {
+      const equation = equations[next]!;
+      const offset = equation.textOffset!;
+      if (offset > end) break;
+      element.append(paragraph.text.slice(cursor, Math.max(cursor, offset)));
+      element.append(renderDocxEquation(element.ownerDocument, equation));
+      cursor = Math.max(cursor, offset);
+    }
+    element.append(paragraph.text.slice(cursor, end));
+    cursor = end;
+  };
   for (const hyperlink of paragraph.hyperlinks) {
     const index = hyperlink.label.length === 0
       ? -1
       : paragraph.text.indexOf(hyperlink.label, cursor);
     if (index < 0) continue;
-    element.append(document.createTextNode(paragraph.text.slice(cursor, index)));
+    appendText(index);
     element.append(hyperlinkElement(hyperlink));
     cursor = index + hyperlink.label.length;
   }
-  element.append(document.createTextNode(paragraph.text.slice(cursor)));
+  appendText(paragraph.text.length);
 }
 
 function unavailablePlaceholder(
@@ -87,6 +102,7 @@ function unavailablePlaceholder(
 function paragraphElement(
   paragraph: DocxSemanticParagraph,
   placeholderText: string,
+  equations: readonly DocxEquation[],
 ): HTMLElement {
   const heading = paragraph.headingLevel;
   const tag = heading === null || heading > 6
@@ -95,7 +111,7 @@ function paragraphElement(
       : "p"
     : (`h${heading}` as keyof HTMLElementTagNameMap);
   const element = createEl(tag);
-  appendParagraphText(element, paragraph);
+  appendParagraphText(element, paragraph, equations);
   const { start, end, firstLine } = paragraph.indents ?? {};
   if (start !== undefined) element.style.marginInlineStart = `${start / 20}pt`;
   if (end !== undefined) element.style.marginInlineEnd = `${end / 20}pt`;
@@ -171,22 +187,37 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
 
     const mounted = new Map<number, HTMLElement>();
     const attachments = new Map<number, DocxAttachment[]>();
+    const inlineEquations = new Map<number, DocxEquation[]>();
+    const standaloneEquations = new Map<number, DocxEquation[]>();
+    for (const equation of model.equations ?? []) {
+      const positions = equation.textOffset === null ? standaloneEquations : inlineEquations;
+      const ordinal = equation.afterParagraphOrdinal;
+      const atPosition = positions.get(ordinal) ?? [];
+      atPosition.push(equation);
+      positions.set(ordinal, atPosition);
+    }
     for (const attachment of model.attachments ?? []) {
       const ordinal = attachment.afterParagraphOrdinal;
       const atPosition = attachments.get(ordinal) ?? [];
       atPosition.push(attachment);
       attachments.set(ordinal, atPosition);
     }
-    if (attachments.size > 0) {
+    if (attachments.size > 0 || model.equations !== undefined) {
       const style = container.ownerDocument.createElement("style");
-      style.textContent = DOCX_ATTACHMENT_STYLES;
+      style.textContent = (attachments.size > 0 ? DOCX_ATTACHMENT_STYLES : "")
+        + (model.equations === undefined ? "" : DOCX_EQUATION_STYLES);
       root.append(style);
     }
-    const appendAttachments = (fragment: DocumentFragment, ordinal: number) => {
+    const appendStandaloneContent = (fragment: DocumentFragment, ordinal: number) => {
       for (const attachment of attachments.get(ordinal) ?? []) {
         fragment.append(createDocxAttachmentButton(
           container.ownerDocument, attachment, this.options.messages,
         ));
+      }
+      for (const equation of standaloneEquations.get(ordinal) ?? []) {
+        const line = container.ownerDocument.createElement("div");
+        line.append(renderDocxEquation(container.ownerDocument, equation));
+        fragment.append(line);
       }
     };
     const bodyBlocks = new Map<number, readonly string[]>();
@@ -211,9 +242,11 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
       fragment.append(blank);
     };
     const offsets = [0];
-    let offset = blankHeights.get(0) ?? 0;
+    const gapHeight = (ordinal: number) => (blankHeights.get(ordinal) ?? 0)
+      + (standaloneEquations.get(ordinal)?.length ?? 0) * estimatedParagraphHeight;
+    let offset = gapHeight(0);
     for (let ordinal = 1; ordinal <= count; ordinal += 1) {
-      offset += estimatedParagraphHeight + (blankHeights.get(ordinal) ?? 0);
+      offset += estimatedParagraphHeight + gapHeight(ordinal);
       offsets.push(offset);
     }
     let zoom = 1;
@@ -233,7 +266,7 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
         mounted.clear();
         const fragment = createFragment();
         if (start === 0) {
-          appendAttachments(fragment, 0);
+          appendStandaloneContent(fragment, 0);
           appendBlankLines(fragment, 0);
         }
         for (let index = start; index < start + size; index += 1) {
@@ -253,10 +286,11 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
           const element = paragraphElement(
             paragraph,
             this.options.unavailablePlaceholder,
+            inlineEquations.get(paragraph.ordinal) ?? [],
           );
           mounted.set(paragraph.ordinal, element);
           fragment.append(element);
-          appendAttachments(fragment, paragraph.ordinal);
+          appendStandaloneContent(fragment, paragraph.ordinal);
           const trailingKinds = bodyBlocks.get(paragraph.ordinal);
           if (trailingKinds !== undefined) {
             fragment.append(

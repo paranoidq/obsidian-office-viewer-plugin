@@ -60,6 +60,71 @@ async function rendererFixture(): Promise<ArrayBuffer> {
   return zip.generateAsync({ type: "arraybuffer" });
 }
 
+it("renders inline and display equations in both previews without changing body search text", async () => {
+  const zip = await JSZip.loadAsync(await rendererFixture());
+  zip.file("word/document.xml", `<w:document xmlns:w="${W}"
+    xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body>
+    <w:p><w:r><w:t>Before </w:t></w:r><m:oMath><m:sSub><m:e><m:r><m:t>x</m:t></m:r></m:e>
+      <m:sub><m:r><m:t>1</m:t></m:r></m:sub></m:sSub></m:oMath>
+      <w:r><w:t> after</w:t></w:r></w:p>
+    <w:p><m:oMathPara><m:oMath><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num>
+      <m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara></w:p>
+    <w:p><w:r><w:t>Last</w:t></w:r></w:p>
+  </w:body></w:document>`);
+  const signal = new AbortController().signal;
+  const bytes = await zip.generateAsync({ type: "arraybuffer" });
+  const model = await inspectDocxPackage(bytes, signal);
+  expect(model.paragraphs.map(({ text }) => text)).toEqual(["Before  after", "Last"]);
+  expect(model.hasUnavailableBodyContent).toBe(false);
+  const source = new DocxRenderSource(bytes, model);
+  const renderer = createDocxRendererAdapter({ pageLayout: true });
+  const container = document.createElement("div");
+  for (const mode of ["full", "simplified"] as const) {
+    const session = await source.open(renderer, container, mode, signal);
+    const inline = session.revealParagraph(1);
+    expect(inline?.textContent).toBe("Before x1 after");
+    expect(inline?.querySelector("math msub")?.textContent).toBe("x1");
+    expect(inline?.nextElementSibling?.querySelector('math[display="block"] mfrac')?.textContent).toBe("ab");
+    expect(session.revealParagraph(2)?.textContent).toBe("Last");
+    session.dispose();
+  }
+});
+
+it("opens full layout when sanitizing a legacy picture empties its compatibility fallback", async () => {
+  const zip = await JSZip.loadAsync(await rendererFixture());
+  zip.file("word/document.xml", `<w:document xmlns:w="${W}"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+    <w:body><w:p>
+      <w:r><w:t>Before</w:t></w:r>
+      <w:r><mc:AlternateContent>
+        <mc:Choice Requires="wps"><w:drawing/></mc:Choice>
+        <mc:Fallback><w:pict/></mc:Fallback>
+      </mc:AlternateContent></w:r>
+      <w:r><mc:AlternateContent>
+        <mc:Choice Requires="wps"><w:drawing/></mc:Choice>
+      </mc:AlternateContent></w:r>
+      <w:r><mc:AlternateContent>
+        <mc:Choice Requires="wps"><w:drawing/></mc:Choice>
+        <mc:Fallback><w:br/></mc:Fallback>
+      </mc:AlternateContent></w:r>
+      <w:r><w:t>After</w:t></w:r>
+    </w:p></w:body>
+  </w:document>`);
+  const signal = new AbortController().signal;
+  const bytes = await zip.generateAsync({ type: "arraybuffer" });
+  const model = await inspectDocxPackage(bytes, signal);
+  const source = new DocxRenderSource(bytes, model);
+  const session = await source.open(
+    createDocxRendererAdapter({ pageLayout: true }), document.createElement("div"), "full", signal,
+  );
+  expect(session.candidate).toBe("docx-preview");
+  expect(session.revealParagraph(1)?.textContent).toBe("BeforeAfter");
+  expect(session.revealParagraph(1)?.querySelectorAll("br")).toHaveLength(1);
+  expect(model.paragraphs[0]?.unavailableContent).toEqual(["embedded-object", "alternate-content"]);
+  session.dispose();
+});
+
 it("preserves Word blank lines and inherited character indents in both preview modes", async () => {
   const zip = await JSZip.loadAsync(await rendererFixture());
   zip.file("word/document.xml", `<w:document xmlns:w="${W}"><w:body>

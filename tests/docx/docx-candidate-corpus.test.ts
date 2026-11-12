@@ -45,10 +45,11 @@ describe("committed DOCX semantic corpus", () => {
     ]);
   });
 
-  it("detects all committed unavailable-content categories", async () => {
+  it("detects remaining unavailable content alongside supported equations", async () => {
     const model = await inspect("unavailable-content.docx");
 
     expect(model.hasUnavailableBodyContent).toBe(true);
+    expect(model.equations).toHaveLength(1);
     expect(
       new Set([
         ...model.paragraphs.flatMap(
@@ -58,7 +59,6 @@ describe("committed DOCX semantic corpus", () => {
       ]),
     ).toEqual(
       new Set([
-        "equation",
         "embedded-object",
         "external-image",
         "alt-chunk",
@@ -84,7 +84,7 @@ describe("docx-preview committed DOCX corpus", () => {
     const bytes = await fixtureBytes(name);
     const signal = new AbortController().signal;
     const model = await inspectDocxPackage(bytes, signal);
-    const rendererBytes = await createSafeDocxRendererBuffer(bytes, signal);
+    const rendererBytes = await createSafeDocxRendererBuffer(bytes, signal, undefined, model);
     const container = document.createElement("div");
     const adapter: DocxRendererAdapter = createAdapter();
 
@@ -96,6 +96,7 @@ describe("docx-preview committed DOCX corpus", () => {
     );
 
     expect(session.paragraphElements.size).toBe(model.paragraphs.length);
+    expect(container.querySelectorAll("math[data-docx-equation]")).toHaveLength(model.equations?.length ?? 0);
     session.dispose();
   });
 });

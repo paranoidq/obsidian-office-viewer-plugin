@@ -2,6 +2,7 @@ export type DocxOpenErrorCategory =
   | "malformed"
   | "protected"
   | "incompatible"
+  | "render-failed"
   | "resource-exhausted"
   | "cancelled"
   | "unknown";

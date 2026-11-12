@@ -1,6 +1,7 @@
 import { renderAsync } from "docx-preview";
 import { createDocxAttachmentButton, DOCX_ATTACHMENT_STYLES } from "../docx-attachment-controls";
 import { createDocxMessageTranslator } from "../docx-messages";
+import { DOCX_EQUATION_STYLES, renderDocxEquation } from "../docx-equations";
 import { DOCX_TOC_STYLES, layoutDocxTocEntry } from "./docx-preview-toc";
 import { DocxOpenError } from "../docx-open-error";
 import type { DocxSemanticModel } from "../docx-semantic-model";
@@ -21,6 +22,16 @@ import {
   type DocxRendererSession,
 } from "./docx-renderer-adapter";
 
+function renderedBodyText(element: HTMLElement): string {
+  if (element.querySelector("math[data-docx-equation]") === null) return element.textContent ?? "";
+  const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let text = "";
+  for (let child = walker.nextNode(); child !== null; child = walker.nextNode()) {
+    if (!child.parentElement?.closest("math[data-docx-equation]")) text += child.textContent ?? "";
+  }
+  return text;
+}
+
 function revealMappedOrUniqueText(
   staging: HTMLElement,
   paragraphElements: ReadonlyMap<number, HTMLElement>,
@@ -38,7 +49,7 @@ function revealMappedOrUniqueText(
   ).filter(
     (element) =>
       element.querySelector("p, h1, h2, h3, h4, h5, h6, li") === null &&
-      comparableParagraphText(element.textContent ?? "") === needle,
+      comparableParagraphText(renderedBodyText(element)) === needle,
   );
   if (matches.length !== 1) return null;
   const element = matches[0];
@@ -94,7 +105,7 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
     } catch (error) {
       signal.throwIfAborted();
       throw new DocxOpenError(
-        "incompatible",
+        "render-failed",
         "docx-preview could not render the DOCX",
         { cause: error },
       );
@@ -115,7 +126,7 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
       }
       if (paragraphElements.size === 0 && model.paragraphs.length > 0) {
         throw new DocxOpenError(
-          "incompatible",
+          "render-failed",
           "docx-preview output does not map to the project-owned paragraph model",
         );
       }
@@ -126,10 +137,13 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
       const element = paragraphElements.get(paragraph.ordinal);
       if (element !== undefined) markDocxHeading(element, paragraph.headingLevel);
     }
-    if (model.attachments !== undefined) {
+    if (model.attachments !== undefined || model.equations !== undefined) {
       const markers = new Map(Array.from(content.querySelectorAll<HTMLElement>("[id]"),
         (element) => [element.id, element] as const));
-      for (const attachment of model.attachments) {
+      for (const equation of model.equations ?? []) {
+        markers.get(equation.marker)?.replaceWith(renderDocxEquation(content.ownerDocument, equation));
+      }
+      for (const attachment of model.attachments ?? []) {
         const marker = markers.get(attachment.marker);
         if (marker === undefined) continue;
         const following = marker.nextElementSibling as HTMLElement | null;
@@ -140,7 +154,8 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
         ));
       }
       const style = content.ownerDocument.createElement("style");
-      style.textContent = DOCX_ATTACHMENT_STYLES;
+      style.textContent = (model.attachments === undefined ? "" : DOCX_ATTACHMENT_STYLES)
+        + (model.equations === undefined ? "" : DOCX_EQUATION_STYLES);
       content.append(style);
     }
     container.replaceChildren(staging);

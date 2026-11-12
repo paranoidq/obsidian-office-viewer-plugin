@@ -1,4 +1,5 @@
 import { wordChild, wordValue } from "./docx-heading-level";
+import { DOCX_EQUATION_MARKER } from "./docx-equations";
 
 const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const INDENTS = ["start", "end", "firstLine"] as const;
@@ -133,7 +134,8 @@ export function canRenderDocxBlankLine(paragraph: Element): boolean {
     if (type === "page" || type === "column") return false;
   }
   for (const bookmark of paragraph.getElementsByTagNameNS(WORD_NS, "bookmarkStart")) {
-    if (bookmark.getAttributeNS(WORD_NS, "name")?.startsWith("_office-viewer-attachment-")) return false;
+    const name = bookmark.getAttributeNS(WORD_NS, "name");
+    if (name?.startsWith("_office-viewer-attachment-") || name?.startsWith(DOCX_EQUATION_MARKER)) return false;
   }
   return true;
 }

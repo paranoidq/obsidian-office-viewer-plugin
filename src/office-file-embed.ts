@@ -3,6 +3,7 @@ import type { DocxMessageTranslator } from "./docx/docx-messages";
 import { registerDocxAttachmentOpening } from "./docx/docx-attachment-controls";
 import type { DocxAttachmentFile } from "./docx/docx-attachments";
 import { createDocxModeButton } from "./docx/docx-mode-button";
+import { DocxOpenError } from "./docx/docx-open-error";
 import { createDocxOutline, scrollToDocxHeading } from "./docx/docx-outline";
 import { DocxRenderSource } from "./docx/docx-render-source";
 import { inspectDocxPackage } from "./docx/docx-semantic-model";
@@ -242,6 +243,8 @@ export function mountOfficeFileEmbed<TFile>(
           ? messages.text("fileEmbed.legacyUnavailable")
           : format === "pptx"
           ? mapSlideEmbedOpenError(messages, error)
+          : error instanceof DocxOpenError && error.category === "render-failed"
+          ? docxMessages.text("renderFailed")
           : messages.text("fileEmbed.renderFailure"));
       }
     });

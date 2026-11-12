@@ -270,7 +270,7 @@ describe("DOCX project-owned semantic model", () => {
         body: `
           <w:p w14:paraId="00000001">
             <w:r><w:t>Mixed content</w:t></w:r>
-            <m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>
+            <m:oMath><m:phant><m:e><m:r><m:t>x</m:t></m:r></m:e></m:phant></m:oMath>
             <w:object/>
             <w:r><w:drawing><a:blip r:embed="rImage"/></w:drawing></w:r>
           </w:p>

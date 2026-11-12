@@ -54,6 +54,7 @@ const ENGLISH_DOCX_MESSAGES = {
   malformed: "This DOCX is damaged or incomplete.",
   protected: "This DOCX is encrypted or password-protected.",
   incompatible: "This DOCX contains content that cannot be displayed safely.",
+  renderFailed: "The full layout could not be displayed. Try switching to simplified view.",
   resourceExhausted:
     "This DOCX is too large or complex to open within the viewer's safety limits.",
   cancelled: "Loading this DOCX was cancelled.",
@@ -112,6 +113,7 @@ const SIMPLIFIED_CHINESE_DOCX_MESSAGES = {
   malformed: "此 DOCX 已损坏或不完整。",
   protected: "此 DOCX 已加密或受密码保护。",
   incompatible: "此 DOCX 包含无法安全显示的内容。",
+  renderFailed: "无法显示完整排版。可尝试切换到简化视图。",
   resourceExhausted: "此 DOCX 过大或过于复杂，超出了查看器的安全限制。",
   cancelled: "已取消加载此 DOCX。",
   unknown: "发生意外错误，无法打开此 DOCX。",
@@ -166,6 +168,7 @@ const TRADITIONAL_CHINESE_DOCX_MESSAGES = {
   malformed: "此 DOCX 已損毀或不完整。",
   protected: "此 DOCX 已加密或受密碼保護。",
   incompatible: "此 DOCX 包含無法安全顯示的內容。",
+  renderFailed: "無法顯示完整排版。可嘗試切換到簡化檢視。",
   resourceExhausted: "此 DOCX 過大或過於複雜，超出檢視器的安全限制。",
   cancelled: "已取消載入此 DOCX。",
   unknown: "發生未預期的錯誤，無法開啟此 DOCX。",

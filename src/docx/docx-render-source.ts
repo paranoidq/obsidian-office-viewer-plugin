@@ -30,7 +30,7 @@ export class DocxRenderSource {
         this.buffer, signal, (document, styles) => {
           prepareDocxPreviewPageTables(document);
           prepareDocxPreviewParagraphs(document, styles);
-        }, this.model.attachments,
+        }, this.model,
       );
       signal.throwIfAborted();
       this.buffer = buffer;

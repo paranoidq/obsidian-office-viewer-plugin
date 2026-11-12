@@ -559,7 +559,9 @@ export class DocxFileView extends FileView {
       error instanceof DocxOpenError
         ? error.category === "resource-exhausted"
           ? "resourceExhausted"
-          : error.category
+          : error.category === "render-failed"
+            ? "renderFailed"
+            : error.category
         : "unknown";
     this.root.dataset.state = "error";
     this.root.dataset.errorCategory = key;

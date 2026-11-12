@@ -144,10 +144,9 @@ export default class OfficeViewerPlugin extends Plugin {
       }),
     );
     const adapter = this.app.vault.adapter as Partial<FileSystemAdapter> | undefined;
-    const legacyPreview = createLegacyOfficePreview(
-      process.env.OFFICE_VIEWER_LEGACY_SOFFICE ?? "",
-      adapter?.getBasePath?.() ?? "",
-    );
+    const legacyPreview = process.env.OFFICE_VIEWER_LEGACY_SOFFICE
+      ? createLegacyOfficePreview(process.env.OFFICE_VIEWER_LEGACY_SOFFICE, adapter?.getBasePath?.() ?? "")
+      : undefined;
     const readPreviewBinary = (file: TFile, signal: AbortSignal) => {
       const extension = file.extension.toLowerCase();
       const readSource = () => this.app.vault.readBinary(file);

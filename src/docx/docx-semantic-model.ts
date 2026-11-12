@@ -3,6 +3,13 @@ import JSZip, { type JSZipObject } from "jszip";
 import { convertWindowsMetafileToPng } from "./convert-windows-metafile";
 import { DocxOpenError } from "./docx-open-error";
 import {
+  DOCX_EQUATION_MARKER,
+  docxEquationElements,
+  isDocxEquation,
+  parseDocxEquation,
+  type DocxEquation,
+} from "./docx-equations";
+import {
   canRenderDocxBlankLine,
   createDocxParagraphLayoutResolver,
   type DocxParagraphIndents,
@@ -19,10 +26,10 @@ import { materializeDocxChartsAsImages } from "./materialize-docx-charts";
 
 const WORDPROCESSING_NAMESPACE =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const MARKUP_COMPATIBILITY_NAMESPACE =
+  "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const OFFICE_RELATIONSHIP_NAMESPACE =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-const MATH_NAMESPACE =
-  "http://schemas.openxmlformats.org/officeDocument/2006/math";
 const HYPERLINK_RELATIONSHIP =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 const IMAGE_RELATIONSHIP =
@@ -83,10 +90,17 @@ export type DocxUnavailableContentKind =
   | "equation"
   | "embedded-object"
   | "alt-chunk"
+  | "alternate-content"
   | "external-image";
 
 function isChartGraphicElement(element: Element): boolean {
   return element.localName === "chart" || element.localName === "chartEx";
+}
+
+function alternateFallback(element: Element): Element | undefined {
+  return Array.from(element.children).find((child) =>
+    child.namespaceURI === MARKUP_COMPATIBILITY_NAMESPACE && child.localName === "Fallback",
+  )?.firstElementChild ?? undefined;
 }
 
 export interface DocxSemanticParagraph {
@@ -121,6 +135,7 @@ export interface DocxSemanticModel {
   readonly unavailableBodyBlocks: readonly DocxUnavailableBodyBlock[];
   readonly hasUnavailableBodyContent: boolean;
   readonly attachments?: readonly DocxAttachment[];
+  readonly equations?: readonly DocxEquation[];
   readonly tocEntries?: readonly DocxTocEntry[];
   readonly blankLineHeights?: readonly { afterParagraphOrdinal: number; twips: number }[];
 }
@@ -367,11 +382,18 @@ function runIsHidden(element: Element): boolean {
   return false;
 }
 
-function paragraphText(paragraph: Element): string {
+function paragraphText(
+  paragraph: Element,
+  onEquation: (element: Element, offset: number) => void,
+): string {
   let text = "";
   const append = (node: Node): void => {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const element = node as Element;
+    if (isDocxEquation(element)) {
+      if (!runIsHidden(element)) onEquation(element, text.length);
+      return;
+    }
     if (
       element.namespaceURI === WORDPROCESSING_NAMESPACE &&
       (element.localName === "del" ||
@@ -552,14 +574,10 @@ function unavailableContent(
   paragraph: Element,
   relationships: ReadonlyMap<string, Relationship>,
   attachments: ReadonlySet<Element>,
+  hasUnsupportedEquation: boolean,
 ): readonly DocxUnavailableContentKind[] {
   const kinds = new Set<DocxUnavailableContentKind>();
-  if (
-    paragraph.getElementsByTagNameNS(MATH_NAMESPACE, "oMath").length > 0 ||
-    paragraph.getElementsByTagNameNS(MATH_NAMESPACE, "oMathPara").length > 0
-  ) {
-    kinds.add("equation");
-  }
+  if (hasUnsupportedEquation) kinds.add("equation");
   if (
     Array.from(paragraph.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "object"))
       .some((object) => !attachments.has(object)) ||
@@ -578,6 +596,15 @@ function unavailableContent(
     ).length > 0
   ) {
     kinds.add("alt-chunk");
+  }
+  for (const alternate of paragraph.getElementsByTagNameNS(
+    MARKUP_COMPATIBILITY_NAMESPACE, "AlternateContent",
+  )) {
+    if (alternateFallback(alternate) === undefined &&
+      Array.from(alternate.children).some((branch) => branch.firstElementChild !== null)) {
+      kinds.add("alternate-content");
+      break;
+    }
   }
   for (const element of paragraph.getElementsByTagName("*")) {
     for (const attribute of Array.from(element.attributes)) {
@@ -831,11 +858,16 @@ export async function inspectDocxPackage(
   const unavailableBodyBlocks: DocxUnavailableBodyBlock[] = [];
   const blankLineHeights = new Map<number, number>();
   const attachments: DocxAttachment[] = [];
+  const equations: DocxEquation[] = [];
+  const equationIndexes = new Map(docxEquationElements(document).map(
+    (equation, index) => [equation, index] as const,
+  ));
   const objectIndexes = new Map(Array.from(
     document.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "object"),
     (object, index) => [object, index] as const,
   ));
   let markerPrefix: string | undefined;
+  let equationPrefix: string | undefined;
   for (const paragraph of body.getElementsByTagNameNS(
     WORDPROCESSING_NAMESPACE,
     "p",
@@ -846,8 +878,26 @@ export async function inspectDocxPackage(
     ) {
       continue;
     }
-    const text = paragraphText(paragraph);
+    const inlineEquations: { index: number; offset: number; nodes: DocxEquation["nodes"] }[] = [];
+    let hasUnsupportedEquation = false;
+    const text = paragraphText(paragraph, (equation, offset) => {
+      const index = equationIndexes.get(equation);
+      const nodes = equation.parentElement === paragraph ? parseDocxEquation(equation) : null;
+      if (index === undefined || nodes === null) {
+        hasUnsupportedEquation = true;
+      } else {
+        inlineEquations.push({ index, offset, nodes });
+      }
+    });
     const hasText = text.trim().length > 0;
+    const afterParagraphOrdinal = paragraphs.length + Number(hasText);
+    for (const { index, offset, nodes } of inlineEquations) {
+      equationPrefix ??= DOCX_EQUATION_MARKER + crypto.randomUUID() + "-";
+      equations.push({
+        index, marker: equationPrefix + index, afterParagraphOrdinal,
+        textOffset: hasText ? offset : null, nodes,
+      });
+    }
     const properties = wordChild(paragraph, "pPr");
     const recognized = new Set<Element>();
     for (const object of paragraph.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "object")) {
@@ -862,20 +912,20 @@ export async function inspectDocxPackage(
         ...part,
         objectIndex,
         marker: markerPrefix + objectIndex,
-        afterParagraphOrdinal: paragraphs.length + Number(hasText),
+        afterParagraphOrdinal,
         hasPreview: wordChild(object, "drawing") !== null,
         centerPreview: object.getAttribute("officeViewerAttachmentCentered") === "true",
       });
       recognized.add(object);
     }
-    const unavailable = unavailableContent(paragraph, relationships, recognized);
+    const unavailable = unavailableContent(paragraph, relationships, recognized, hasUnsupportedEquation);
     if (!hasText) {
       if (unavailable.length > 0) {
         unavailableBodyBlocks.push({
           afterParagraphOrdinal: paragraphs.length,
           kinds: unavailable,
         });
-      } else if (recognized.size === 0 && canRenderDocxBlankLine(paragraph)) {
+      } else if (recognized.size === 0 && inlineEquations.length === 0 && canRenderDocxBlankLine(paragraph)) {
         const { lineHeight, spacing } = paragraphLayout(properties);
         const lines = 1 + (text.match(/\n/g)?.length ?? 0);
         const previous = blankLineHeights.get(paragraphs.length) ?? 0;
@@ -959,6 +1009,7 @@ export async function inspectDocxPackage(
     bookmarkTargets,
     unavailableBodyBlocks,
     ...(attachments.length > 0 ? { attachments } : {}),
+    ...(equations.length > 0 ? { equations } : {}),
     ...(tocEntries.length > 0 ? { tocEntries } : {}),
     ...(blankLineHeights.size > 0 ? { blankLineHeights: Array.from(
       blankLineHeights, ([afterParagraphOrdinal, twips]) => ({ afterParagraphOrdinal, twips }),
@@ -1020,7 +1071,7 @@ export async function createSafeDocxRendererBuffer(
   buffer: ArrayBuffer,
   signal: AbortSignal,
   prepareLayout?: (document: Document, styles: Document | null) => void,
-  attachments: readonly DocxAttachment[] = [],
+  model?: Pick<DocxSemanticModel, "attachments" | "equations">,
 ): Promise<ArrayBuffer> {
   signal.throwIfAborted();
   let zip: JSZip;
@@ -1033,6 +1084,8 @@ export async function createSafeDocxRendererBuffer(
   const documentPart = zip.file("word/document.xml");
   if (documentPart === null) throw malformed("Missing DOCX main document");
   const document = await readXml(documentPart, signal);
+  const attachments = model?.attachments ?? [];
+  const equations = docxEquationElements(document);
   if (attachments.length > 0) {
     const objects = Array.from(document.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "object"));
     for (const { objectIndex, marker, hasPreview } of attachments) {
@@ -1054,6 +1107,18 @@ export async function createSafeDocxRendererBuffer(
         insertion.before(preview);
       }
     }
+  }
+  const equationMarkers = new Map(model?.equations?.map(({ index, marker }) => [index, marker]));
+  for (const [index, equation] of equations.entries()) {
+    const marker = equationMarkers.get(index);
+    if (marker === undefined) {
+      equation.remove();
+      continue;
+    }
+    const bookmark = document.createElementNS(WORDPROCESSING_NAMESPACE, "w:bookmarkStart");
+    bookmark.setAttributeNS(WORDPROCESSING_NAMESPACE, "w:id", String(2_000_000 + index));
+    bookmark.setAttributeNS(WORDPROCESSING_NAMESPACE, "w:name", marker);
+    equation.replaceWith(bookmark);
   }
   const relationshipsPart = zip.file("word/_rels/document.xml.rels");
   const externalImageIds = new Set<string>();
@@ -1126,10 +1191,6 @@ export async function createSafeDocxRendererBuffer(
         "pict",
       ),
     ),
-    ...Array.from(document.getElementsByTagNameNS(MATH_NAMESPACE, "oMath")),
-    ...Array.from(
-      document.getElementsByTagNameNS(MATH_NAMESPACE, "oMathPara"),
-    ),
   ]) {
     object.remove();
   }
@@ -1184,6 +1245,13 @@ export async function createSafeDocxRendererBuffer(
     (
       closestElement(element, WORDPROCESSING_NAMESPACE, "drawing") ?? element
     ).remove();
+  }
+  // docx-preview 0.3.6 reads the first fallback element in a run without
+  // checking whether one exists. Sanitizing a legacy picture can empty it.
+  for (const element of Array.from(document.getElementsByTagNameNS(
+    MARKUP_COMPATIBILITY_NAMESPACE, "AlternateContent",
+  )).reverse()) {
+    if (alternateFallback(element) === undefined) element.remove();
   }
   signal.throwIfAborted();
   if (prepareLayout !== undefined) {
