@@ -185,7 +185,9 @@ describe("Live Preview slide embed extension", () => {
       expect(view.dom.querySelector(".pptx-slide-embed")?.getAttribute("data-state"))
         .toBe("ready");
     });
-    view.dom.querySelector<HTMLAnchorElement>("a.internal-link")!.click();
+    const openInTab = view.dom.querySelector<HTMLAnchorElement>('[data-action="open-in-tab"]')!;
+    expect(openInTab.getAttribute("aria-label")).toBe("Open in new tab");
+    openInTab.click();
     expect(openSource).toHaveBeenCalledWith(
       "deck.pptx#slide-id=261&slide=1",
       "note.md",

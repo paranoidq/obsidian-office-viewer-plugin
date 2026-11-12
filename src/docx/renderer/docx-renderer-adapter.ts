@@ -7,6 +7,8 @@ export type DocxRendererCandidate =
   | "docx-preview"
   | "bounded-semantic";
 
+export type DocxRenderMode = "full" | "simplified";
+
 export interface DocxRendererSession {
   readonly candidate: DocxRendererCandidate;
   readonly paragraphElements: ReadonlyMap<number, HTMLElement>;
@@ -22,6 +24,7 @@ export interface DocxRendererAdapter {
     container: HTMLElement,
     model: DocxSemanticModel,
     signal: AbortSignal,
+    mode?: DocxRenderMode,
   ): Promise<DocxRendererSession>;
 }
 

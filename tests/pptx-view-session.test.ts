@@ -737,7 +737,7 @@ describe("PptxViewSession", () => {
         "aria-label",
       ),
     ).toBe("进入全屏");
-    expect(root.querySelector('[data-action="open-externally"]')?.textContent)
+    expect(root.querySelector('[data-action="open-externally"]')?.getAttribute("aria-label"))
       .toBe("在默认应用中打开");
 
     finishRead(new ArrayBuffer(1));
@@ -809,7 +809,7 @@ describe("PptxViewSession", () => {
         "aria-label",
       ),
     ).toBe("投影片編號");
-    expect(root.querySelector('[data-action="open-externally"]')?.textContent)
+    expect(root.querySelector('[data-action="open-externally"]')?.getAttribute("aria-label"))
       .toBe("在預設應用程式中開啟");
 
     finishRead(new ArrayBuffer(1));
@@ -1663,7 +1663,7 @@ describe("PptxViewSession", () => {
     await session.open("deck.pptx");
 
     expect(reader.readBinary).toHaveBeenCalledOnce();
-    expect(reader.readBinary).toHaveBeenCalledWith("deck.pptx");
+    expect(reader.readBinary).toHaveBeenCalledWith("deck.pptx", expect.any(AbortSignal));
     expect(adapter.open).toHaveBeenCalledOnce();
     expect(adapter.open).toHaveBeenCalledWith(
       bytes,

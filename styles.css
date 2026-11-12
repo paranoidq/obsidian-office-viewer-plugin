@@ -27,6 +27,79 @@
   margin-block: auto;
 }
 
+.office-file-embed__native {
+  display: none !important;
+}
+
+.office-file-embed {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin-block: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  background: var(--background-secondary);
+}
+
+.office-file-embed__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-2);
+  font: var(--font-ui-small) var(--font-interface);
+  color: var(--text-muted);
+}
+
+.office-file-embed__title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-file-embed__navigation:not([hidden]) {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  white-space: nowrap;
+}
+
+.office-file-embed__status:not(:empty) {
+  padding: var(--size-4-1) var(--size-4-2);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.office-file-embed__body {
+  width: 100%;
+  overflow: hidden;
+}
+
+.office-file-embed[data-format="pptx"] .office-file-embed__body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--background-primary);
+}
+
+.office-file-embed[data-format="pptx"] .office-file-embed__body > * {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.office-file-embed[data-format="docx"] .office-file-embed__body {
+  max-height: 75vh;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  font: 11pt "Calibri", "Carlito", sans-serif;
+}
+
+.office-file-embed[data-format="docx"] .office-viewer-docx--bounded-semantic {
+  padding-inline: var(--size-4-3);
+}
+
 .pptx-slide-embed {
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
@@ -821,6 +894,11 @@
   width: 1.1em;
 }
 
+.office-viewer-icon-button[data-action="toggle-docx-mode"][aria-pressed="true"] {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
 .office-viewer-error {
   align-items: center;
   align-self: center;
@@ -1064,6 +1142,11 @@
   margin: 0 auto;
   max-width: 52rem;
   width: min(100%, 52rem);
+}
+
+.office-viewer-docx-reading-body > .office-viewer-docx--paged {
+  max-width: none;
+  width: 100%;
 }
 
 /* Collapse docx-preview's grey wrapper + white page into one reading surface. */

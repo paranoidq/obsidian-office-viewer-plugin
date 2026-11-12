@@ -28,6 +28,7 @@ export interface PptxSlideEmbedOptions {
   readonly messages: MessageTranslator;
   readonly showDiagnostics: () => boolean;
   readonly openExternally?: (file: TFile) => Promise<void>;
+  readonly openSource?: (linkTarget: string, notePath: string) => Promise<void>;
   readonly lifecycle?: {
     register(child: MarkdownRenderChild): void;
     unregister(child: MarkdownRenderChild): void;
@@ -36,7 +37,9 @@ export interface PptxSlideEmbedOptions {
 
 function corePortsFromOptions(
   options: PptxSlideEmbedOptions,
+  notePath?: string,
 ): SlideEmbedCorePorts<TFile> {
+  const { openSource } = options;
   return {
     readBinary: (file) => options.app.vault.readBinary(file),
     renderer: options.renderer,
@@ -44,6 +47,9 @@ function corePortsFromOptions(
     messages: options.messages,
     showDiagnostics: options.showDiagnostics,
     openExternally: options.openExternally,
+    openSource: notePath === undefined || openSource === undefined
+      ? undefined
+      : (linkTarget) => openSource(linkTarget, notePath),
   };
 }
 
@@ -130,12 +136,13 @@ class PptxSlideEmbedChild extends MarkdownRenderChild {
     target: SlideReferenceTarget,
     sourcePath: string,
     private readonly options: PptxSlideEmbedOptions,
+    notePath: string,
     private readonly nativeEmbed: HTMLElement | null = null,
   ) {
     super(container);
     this.controller = new SlideEmbedController(
       container,
-      corePortsFromOptions(options),
+      corePortsFromOptions(options, notePath),
     );
     this.controller.mount({ file, sourcePath, target });
   }
@@ -238,6 +245,7 @@ export function processPptxSlideEmbeds(
       parsed.target,
       parsed.sourcePath,
       options,
+      context.sourcePath,
       nativeEmbed,
     );
     options.lifecycle?.register(child);

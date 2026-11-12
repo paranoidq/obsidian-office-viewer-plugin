@@ -26,12 +26,13 @@ const ENGLISH_DOCX_MESSAGES = {
   unavailableContent:
     "Some main-body content cannot be represented here. In-flow placeholders mark every detected omission.",
   unavailablePlaceholder: "This document content cannot be displayed.",
-  largeDocumentSimplified:
-    "This large document is shown in a simplified reading mode.",
+  simplifiedView: "Simplified view",
+  switchToSimplified: "Switch to simplified view",
+  switchToFull: "Switch to full layout",
+  showingSimplified: "Showing simplified view.",
+  modeSwitchFailed: "Could not switch the document view.",
   mappingDegraded:
     "Some paragraphs could not be linked for search navigation; the document remains readable.",
-  previewUnavailableSimplified:
-    "Rich preview was unavailable, so this document is shown in a simplified reading mode.",
   blockedLink: "This document link is blocked for safety.",
   bookmarkUnavailable:
     "The internal document link target is unavailable.",
@@ -70,10 +71,12 @@ const SIMPLIFIED_CHINESE_DOCX_MESSAGES = {
   unavailableContent:
     "部分正文内容无法在此呈现；所有检测到的缺失位置均已显示占位提示。",
   unavailablePlaceholder: "无法显示此文档内容。",
-  largeDocumentSimplified: "此大型文档正以简化阅读模式显示。",
+  simplifiedView: "简化视图",
+  switchToSimplified: "切换到简化视图",
+  switchToFull: "切换到完整排版",
+  showingSimplified: "正在使用简化视图。",
+  modeSwitchFailed: "无法切换文档视图。",
   mappingDegraded: "部分段落无法关联到搜索定位，但文档仍可阅读。",
-  previewUnavailableSimplified:
-    "富文本预览不可用，此文档正以简化阅读模式显示。",
   blockedLink: "出于安全原因，已阻止此文档链接。",
   bookmarkUnavailable: "此文档内部链接的目标不可用。",
   malformed: "此 DOCX 已损坏或不完整。",
@@ -107,10 +110,12 @@ const TRADITIONAL_CHINESE_DOCX_MESSAGES = {
   unavailableContent:
     "部分正文內容無法在此呈現；所有偵測到的缺失位置均已顯示占位提示。",
   unavailablePlaceholder: "無法顯示此文件內容。",
-  largeDocumentSimplified: "此大型文件正以簡化閱讀模式顯示。",
+  simplifiedView: "簡化檢視",
+  switchToSimplified: "切換到簡化檢視",
+  switchToFull: "切換到完整排版",
+  showingSimplified: "正在使用簡化檢視。",
+  modeSwitchFailed: "無法切換文件檢視。",
   mappingDegraded: "部分段落無法關聯到搜尋定位，但文件仍可閱讀。",
-  previewUnavailableSimplified:
-    "豐富預覽不可用，此文件正以簡化閱讀模式顯示。",
   blockedLink: "基於安全原因，已阻止此文件連結。",
   bookmarkUnavailable: "此文件內部連結的目標不可用。",
   malformed: "此 DOCX 已損毀或不完整。",

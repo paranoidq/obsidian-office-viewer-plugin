@@ -89,6 +89,12 @@ const ENGLISH_MESSAGES = {
   "embed.currentSlide": "{name} — Slide {slide}",
   "embed.sourceMissing": "The source presentation is no longer available.",
   "embed.renderFailure": "This slide could not be rendered safely.",
+  "fileEmbed.sourceMissing": "The source file could not be found.",
+  "fileEmbed.openInTab": "Open in new tab",
+  "fileEmbed.openInTabFailure": "Unable to open the preview in a new tab.",
+  "fileEmbed.renderFailure": "This document could not be previewed.",
+  "fileEmbed.legacyUnavailable": "This legacy Office file needs LibreOffice for in-note preview. You can open the source in the default application.",
+  "fileEmbed.docxPartial": "Some formatting or content is simplified in this preview.",
   "compatibility.unsupportedContent":
     "Some presentation content may not render correctly. Compare with the default application when accuracy matters.",
   "compatibility.fontSubstitution":
@@ -226,6 +232,12 @@ const SIMPLIFIED_CHINESE_MESSAGES = {
   "embed.currentSlide": "{name} — 第 {slide} 张幻灯片",
   "embed.sourceMissing": "源演示文稿已不存在。",
   "embed.renderFailure": "无法安全渲染此幻灯片。",
+  "fileEmbed.sourceMissing": "找不到源文件。",
+  "fileEmbed.openInTab": "在新标签页打开",
+  "fileEmbed.openInTabFailure": "无法在新标签页中打开预览。",
+  "fileEmbed.renderFailure": "无法预览此文档。",
+  "fileEmbed.legacyUnavailable": "此旧版 Office 文件需要 LibreOffice 才能在笔记中预览。你可以在系统默认应用中打开原文件。",
+  "fileEmbed.docxPartial": "此预览中的部分格式或内容已简化。",
   "compatibility.unsupportedContent":
     "部分演示文稿内容可能无法正确显示。需要确认准确性时，请与默认应用中的效果进行比较。",
   "compatibility.fontSubstitution":
@@ -356,6 +368,12 @@ const TRADITIONAL_CHINESE_MESSAGES = {
   "embed.currentSlide": "{name} — 第 {slide} 張投影片",
   "embed.sourceMissing": "來源簡報已不存在。",
   "embed.renderFailure": "無法安全呈現此投影片。",
+  "fileEmbed.sourceMissing": "找不到來源檔案。",
+  "fileEmbed.openInTab": "在新分頁開啟",
+  "fileEmbed.openInTabFailure": "無法在新分頁中開啟預覽。",
+  "fileEmbed.renderFailure": "無法預覽此文件。",
+  "fileEmbed.legacyUnavailable": "此舊版 Office 檔案需要 LibreOffice 才能在筆記中預覽。你可以在系統預設應用程式中開啟原始檔案。",
+  "fileEmbed.docxPartial": "此預覽中的部分格式或內容已簡化。",
   "compatibility.unsupportedContent":
     "部分簡報內容可能無法正確顯示。需要確認準確性時，請與預設應用程式中的效果進行比較。",
   "compatibility.fontSubstitution":

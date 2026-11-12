@@ -5,8 +5,11 @@ desktop Obsidian.
 The normal viewing path does not upload files, call a cloud renderer, follow
 external media relationships, or send telemetry or analytics.
 
-The plugin reads `.pptx` and `.docx` source bytes through Obsidian's Vault API
-and never writes back to either source. Optional PPTX reading-position history
+The plugin reads Office source bytes through Obsidian's Vault API and never
+writes back to the source. The macOS development build can convert binary
+`.ppt` and `.doc` using an installed LibreOffice. It uses a temporary copy and
+profile in a process with network access blocked, then deletes the temporary
+files. Optional PPTX reading-position history
 stores only a Vault-relative path, file size, modification time, zero-based
 slide index, and update timestamp in the plugin data store. It can be disabled
 and cleared from settings.
@@ -47,7 +50,7 @@ evidence contains only elapsed time and mounted-result counts.
 DOCX body search is likewise limited to one open document and one view
 lifecycle. The query, extracted body paragraphs, snippets, match counts, and
 active result are not persisted in plugin data, Markdown, diagnostics, or the
-source document. DOCX support does not create paragraph references, embeds,
+source document. DOCX support does not create paragraph references,
 companion notes, or a Vault-wide index.
 
 Safe `http`, `https`, and `mailto` document links are opened only after an

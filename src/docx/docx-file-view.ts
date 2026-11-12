@@ -10,27 +10,31 @@ import {
   createOfficeViewerToolbar,
   decorateOfficeViewerIconButton,
 } from "../office-viewer-chrome";
+import { registerOfficeEmbedTextCopy } from "../office-embed-text-copy";
 import type {
   DocxMessageTranslator,
 } from "./docx-messages";
 import { DocxOpenError } from "./docx-open-error";
 import { DocxSearchPanel } from "./docx-search-panel";
 import {
-  createSafeDocxRendererBuffer,
   inspectDocxPackage,
   type DocxSemanticModel,
   type DocxSemanticParagraph,
 } from "./docx-semantic-model";
 import type {
+  DocxRenderMode,
   DocxRendererAdapter,
   DocxRendererSession,
 } from "./renderer/docx-renderer-adapter";
+import { DocxRenderSource } from "./docx-render-source";
+import { createDocxModeButton } from "./docx-mode-button";
 
 export const DOCX_VIEW_TYPE = "docx-viewer";
 
 export interface DocxViewDependencies {
   readonly renderer: DocxRendererAdapter;
   readonly messages: DocxMessageTranslator;
+  readonly readBinary?: (file: TFile, signal: AbortSignal) => Promise<ArrayBuffer>;
   readonly openExternalUrl?: (url: string) => Promise<void>;
   readonly openInDefaultApplication?: (file: TFile) => Promise<void>;
 }
@@ -71,6 +75,7 @@ export class DocxFileView extends FileView {
   });
   private readonly searchButton: HTMLButtonElement;
   private readonly externalButton: HTMLButtonElement;
+  private readonly modeToggle: ReturnType<typeof createDocxModeButton>;
   private readonly notices = createDiv();
   private readonly noticesIcon = createSpan();
   private readonly noticesText = createSpan();
@@ -81,9 +86,11 @@ export class DocxFileView extends FileView {
   private readonly searchPanel: DocxSearchPanel;
   private currentFile: TFile | null = null;
   private model: DocxSemanticModel | null = null;
+  private renderSource: DocxRenderSource | null = null;
   private rendererSession: DocxRendererSession | null = null;
   private activeParagraph: DocxSemanticParagraph | null = null;
-  private openGeneration = 0;
+  private activeParagraphElement: HTMLElement | null = null;
+  private readonly unregisterTextCopy: () => void;
   private abortController: AbortController | null = null;
   private disposed = false;
   private diagnostics: DocxViewPerformanceDiagnostics = {
@@ -111,10 +118,16 @@ export class DocxFileView extends FileView {
       dependencies.messages.text("searchOpen"),
     );
     this.searchButton.setAttribute("aria-pressed", "false");
-    this.externalButton = button(
-      dependencies.messages.text("openDefault"),
-    );
+    this.externalButton = button("");
+    decorateOfficeViewerIconButton(this.externalButton, "lucide-external-link");
+    this.externalButton.title = dependencies.messages.text("openDefault");
+    this.externalButton.setAttribute("aria-label", this.externalButton.title);
     this.externalButton.setAttribute("data-action", "open-externally");
+    this.modeToggle = createDocxModeButton(
+      this.root.ownerDocument, dependencies.messages, (mode) => {
+        void this.renderDocument(mode);
+      },
+    );
     this.notices.className = "office-viewer-docx-notices";
     this.notices.setAttribute("role", "status");
     this.notices.hidden = true;
@@ -129,6 +142,7 @@ export class DocxFileView extends FileView {
     this.searchRail.className = "office-viewer-docx-search-rail";
     this.readingBody.className = "office-viewer-docx-reading-body";
     this.readingBody.setAttribute("role", "document");
+    this.unregisterTextCopy = registerOfficeEmbedTextCopy(this.readingBody);
 
     this.searchPanel = new DocxSearchPanel(this.root, this.searchRail, {
       messages: dependencies.messages,
@@ -141,7 +155,7 @@ export class DocxFileView extends FileView {
     });
 
     this.toolbar.primary.append(this.searchButton);
-    this.toolbar.secondary.append(this.externalButton);
+    this.toolbar.secondary.append(this.modeToggle.button, this.externalButton);
     this.main.append(this.searchRail, this.readingBody);
     this.root.append(
       this.toolbar.root,
@@ -156,6 +170,9 @@ export class DocxFileView extends FileView {
       void this.openCurrentFileExternally();
     });
     this.readingBody.addEventListener("click", (event) => {
+      void this.handleReadingBodyClick(event);
+    });
+    this.readingBody.addEventListener("auxclick", (event) => {
       void this.handleReadingBodyClick(event);
     });
     this.scope = new Scope(this.app.scope);
@@ -179,13 +196,15 @@ export class DocxFileView extends FileView {
   }
 
   override async onLoadFile(file: TFile): Promise<void> {
-    const generation = ++this.openGeneration;
     const startedAt = performance.now();
     this.abortController?.abort();
     const controller = new AbortController();
     this.abortController = controller;
     this.rendererSession?.dispose();
     this.rendererSession = null;
+    this.renderSource = null;
+    this.modeToggle.setMode("full");
+    this.modeToggle.button.disabled = true;
     this.currentFile = file;
     this.root.dataset.state = "loading";
     delete this.root.dataset.errorCategory;
@@ -212,55 +231,81 @@ export class DocxFileView extends FileView {
     };
 
     try {
-      const buffer = await this.app.vault.readBinary(file);
+      const buffer = await (this.dependencies.readBinary?.(file, controller.signal)
+        ?? this.app.vault.readBinary(file));
       controller.signal.throwIfAborted();
       const model = await inspectDocxPackage(buffer, controller.signal);
-      const searchReadyMs = performance.now() - startedAt;
-      const rendererBuffer = await createSafeDocxRendererBuffer(
-        buffer,
-        controller.signal,
+      controller.signal.throwIfAborted();
+      this.model = model;
+      this.renderSource = new DocxRenderSource(buffer, model);
+      this.modeToggle.button.disabled = false;
+      this.diagnostics = {
+        ...this.diagnostics,
+        sourceBytes: buffer.byteLength,
+        paragraphCount: model.paragraphs.length,
+        searchReadyMs: performance.now() - startedAt,
+      };
+      await this.renderDocument("full", startedAt);
+    } catch (error) {
+      if (!controller.signal.aborted) this.renderOpenError(error);
+    }
+  }
+
+  private async renderDocument(mode: DocxRenderMode, startedAt = performance.now()): Promise<void> {
+    const source = this.renderSource;
+    if (source === null || this.disposed) return;
+    this.abortController?.abort();
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.modeToggle.setMode(mode);
+    this.restoreReadingShell();
+    this.root.dataset.state = "loading";
+    delete this.root.dataset.errorCategory;
+    this.setNotice(this.dependencies.messages.text("loading"));
+    this.actionStatus.textContent = "";
+    const previous = this.rendererSession;
+    const scrollRange = this.readingBody.scrollHeight - this.readingBody.clientHeight;
+    const scrollProgress = scrollRange > 0 ? this.readingBody.scrollTop / scrollRange : 0;
+
+    try {
+      const session = await source.open(
+        this.dependencies.renderer, this.readingBody, mode, controller.signal,
       );
-      const session = await this.dependencies.renderer.open(
-        rendererBuffer,
-        this.readingBody,
-        model,
-        controller.signal,
-      );
-      if (
-        this.disposed ||
-        generation !== this.openGeneration ||
-        this.currentFile !== file
-      ) {
+      if (controller.signal.aborted) {
         session.dispose();
         return;
       }
-      this.model = model;
+      previous?.dispose();
       this.rendererSession = session;
+      const model = source.model;
       if (session.managesUnavailableContent !== true) {
         this.installUnavailablePlaceholders(model, session);
       }
+      this.searchButton.disabled = false;
+      if (this.activeParagraph !== null) {
+        this.setActiveParagraph(this.activeParagraph, true);
+      } else if (scrollProgress > 0) {
+        this.readingBody.scrollTop = scrollProgress *
+          (this.readingBody.scrollHeight - this.readingBody.clientHeight);
+      }
       const firstReadableMs = performance.now() - startedAt;
-      this.diagnostics = {
-        candidate: session.candidate,
-        sourceBytes: buffer.byteLength,
-        paragraphCount: model.paragraphs.length,
-        firstReadableMs,
-        searchReadyMs,
-      };
+      this.diagnostics = { ...this.diagnostics, candidate: session.candidate, firstReadableMs };
       this.root.dataset.state = "ready";
       this.root.dataset.renderer = session.candidate;
       this.root.dataset.firstReadableMs = firstReadableMs.toFixed(1);
-      this.root.dataset.searchReadyMs = searchReadyMs.toFixed(1);
+      const searchReadyMs = this.diagnostics.searchReadyMs;
+      if (searchReadyMs !== null) this.root.dataset.searchReadyMs = searchReadyMs.toFixed(1);
       this.renderDocumentNotices(model, session);
     } catch (error) {
-      if (
-        this.disposed ||
-        generation !== this.openGeneration ||
-        controller.signal.aborted
-      ) {
-        return;
+      if (controller.signal.aborted) return;
+      if (previous !== null) {
+        this.modeToggle.setMode(previous.candidate === "bounded-semantic" ? "simplified" : "full");
+        this.root.dataset.state = "ready";
+        this.renderDocumentNotices(source.model, previous);
+        this.actionStatus.textContent = this.dependencies.messages.text("modeSwitchFailed");
+      } else {
+        this.renderOpenError(error, () => { void this.renderDocument(mode); });
       }
-      this.renderOpenError(error);
     }
   }
 
@@ -271,13 +316,14 @@ export class DocxFileView extends FileView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.openGeneration += 1;
     this.abortController?.abort();
     this.abortController = null;
     this.searchPanel.dispose();
+    this.unregisterTextCopy();
     this.rendererSession?.dispose();
     this.rendererSession = null;
     this.model = null;
+    this.renderSource = null;
     this.currentFile = null;
     this.activeParagraph = null;
     this.contentEl.replaceChildren();
@@ -321,15 +367,8 @@ export class DocxFileView extends FileView {
     session: DocxRendererSession,
   ): void {
     const notices: string[] = [];
-    if (session.warnings.includes("large-document-simplified-rendering")) {
-      notices.push(this.dependencies.messages.text("largeDocumentSimplified"));
-    }
-    if (
-      session.warnings.includes("preview-unavailable-simplified-rendering")
-    ) {
-      notices.push(
-        this.dependencies.messages.text("previewUnavailableSimplified"),
-      );
+    if (session.candidate === "bounded-semantic") {
+      notices.push(this.dependencies.messages.text("showingSimplified"));
     }
     if (session.warnings.includes("preview-paragraph-mapping-degraded")) {
       notices.push(this.dependencies.messages.text("mappingDegraded"));
@@ -383,12 +422,9 @@ export class DocxFileView extends FileView {
     paragraph: DocxSemanticParagraph | null,
     reveal: boolean,
   ): void {
-    for (const element of this.readingBody.querySelectorAll(
-      ".is-active-docx-paragraph",
-    )) {
-      element.classList.remove("is-active-docx-paragraph");
-      element.removeAttribute("aria-current");
-    }
+    this.activeParagraphElement?.classList.remove("is-active-docx-paragraph");
+    this.activeParagraphElement?.removeAttribute("aria-current");
+    this.activeParagraphElement = null;
     this.activeParagraph = paragraph;
     if (paragraph === null) {
       this.searchPanel.syncCurrentResult();
@@ -398,6 +434,7 @@ export class DocxFileView extends FileView {
       ? this.rendererSession?.revealParagraph(paragraph.ordinal)
       : this.rendererSession?.paragraphElements.get(paragraph.ordinal);
     if (element == null) return;
+    this.activeParagraphElement = element;
     element.classList.add("is-active-docx-paragraph");
     element.setAttribute("aria-current", "true");
     if (reveal) {
@@ -414,13 +451,19 @@ export class DocxFileView extends FileView {
   }
 
   private async handleReadingBodyClick(event: MouseEvent): Promise<void> {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
+    const ElementConstructor = this.readingBody.ownerDocument.defaultView?.Element;
+    if (ElementConstructor === undefined) return;
+    const target = event.composedPath().find((node): node is Element =>
+      node instanceof ElementConstructor,
+    );
+    if (target === undefined) return;
     const external = target.closest<HTMLAnchorElement>(
       "a[data-docx-external-link]",
     );
     if (external !== null) {
       event.preventDefault();
+      event.stopPropagation();
+      if (event.type !== "click") return;
       const url = external.getAttribute("href") ?? "";
       if (
         !safeExternalProtocol(url) ||
@@ -438,6 +481,7 @@ export class DocxFileView extends FileView {
       }
       return;
     }
+    if (event.type !== "click") return;
     const bookmark = target.closest<HTMLElement>("[data-docx-bookmark]");
     if (bookmark !== null) {
       event.preventDefault();
@@ -481,9 +525,8 @@ export class DocxFileView extends FileView {
     }
   }
 
-  private renderOpenError(error: unknown): void {
+  private renderOpenError(error: unknown, retryRender?: () => void): void {
     this.readingBody.replaceChildren();
-    this.model = null;
     this.rendererSession = null;
     this.searchPanel.close();
     this.updateSearchButton();
@@ -506,7 +549,8 @@ export class DocxFileView extends FileView {
         label: this.dependencies.messages.text("retry"),
         action: "retry",
         onClick: () => {
-          if (file !== null) void this.onLoadFile(file);
+          if (retryRender !== undefined) retryRender();
+          else if (file !== null) void this.onLoadFile(file);
         },
       },
       openExternal:

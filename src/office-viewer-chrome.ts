@@ -123,14 +123,14 @@ export function createOfficeViewerToolbar(
   return { root, primary, secondary };
 }
 
-/** Apply Obsidian icon + shared hit-target class to a toolbar/icon button. */
+/** Apply an Obsidian icon and the shared toolbar hit target. */
 export function decorateOfficeViewerIconButton(
-  button: HTMLButtonElement,
+  control: HTMLButtonElement | HTMLAnchorElement,
   iconId: string,
 ): void {
-  button.classList.add("office-viewer-icon-button");
-  button.textContent = "";
-  setIcon(button, iconId);
+  control.classList.add("office-viewer-icon-button");
+  control.textContent = "";
+  setIcon(control, iconId);
 }
 
 function createOfficeViewerBrand(format: OfficeViewerFormat): HTMLElement {

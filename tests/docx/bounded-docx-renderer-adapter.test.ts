@@ -24,12 +24,11 @@ describe("bounded DOCX renderer", () => {
     const delegateOpen = vi.fn();
     const delegate = { open: delegateOpen } as unknown as DocxRendererAdapter;
     const renderer = new BoundedDocxRendererAdapter(delegate, {
-      largeParagraphThreshold: 1_000,
       windowSize: 240,
     });
     const container = document.createElement("div");
 
-    const session = await renderer.open(source, container, model, signal);
+    const session = await renderer.open(source, container, model, signal, "simplified");
 
     expect(delegateOpen).not.toHaveBeenCalled();
     expect(
@@ -71,7 +70,7 @@ describe("bounded DOCX renderer", () => {
     };
     const renderer = new BoundedDocxRendererAdapter(
       { open: vi.fn() } as unknown as DocxRendererAdapter,
-      { largeParagraphThreshold: 1_000, windowSize: 240 },
+      { windowSize: 240 },
     );
     const container = document.createElement("div");
 
@@ -80,6 +79,7 @@ describe("bounded DOCX renderer", () => {
       container,
       model,
       new AbortController().signal,
+      "simplified",
     );
     const distant = session.revealParagraph(1_001)!;
 

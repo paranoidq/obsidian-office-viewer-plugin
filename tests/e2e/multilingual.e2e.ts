@@ -54,7 +54,7 @@ const EXPECTED_UI = {
     notesNoResults:
       "No matching speaker notes. Slide text, images, charts, and SmartArt are outside this scope.",
     embedCurrent: "representative-12-slides — Slide 6",
-    openPresentation: "Open presentation",
+    openInTab: "Open in new tab",
     invalidPage: "Enter a slide number from 1 to 12.",
   },
   zh: {
@@ -98,7 +98,7 @@ const EXPECTED_UI = {
     notesNoResults:
       "未在讲者备注中找到结果；幻灯片文字、图片、图表和 SmartArt 不在此范围内。",
     embedCurrent: "representative-12-slides — 第 6 张幻灯片",
-    openPresentation: "打开演示文稿",
+    openInTab: "在新标签页打开",
     invalidPage: "请输入 1 到 12 之间的幻灯片编号。",
   },
   "zh-TW": {
@@ -142,7 +142,7 @@ const EXPECTED_UI = {
     notesNoResults:
       "在講者備註中找不到結果；投影片文字、圖片、圖表和 SmartArt 不在此範圍內。",
     embedCurrent: "representative-12-slides — 第 6 張投影片",
-    openPresentation: "開啟簡報",
+    openInTab: "在新分頁開啟",
     invalidPage: "請輸入 1 到 12 之間的投影片編號。",
   },
   fr: {
@@ -187,7 +187,7 @@ const EXPECTED_UI = {
     notesNoResults:
       "No matching speaker notes. Slide text, images, charts, and SmartArt are outside this scope.",
     embedCurrent: "representative-12-slides — Slide 6",
-    openPresentation: "Open presentation",
+    openInTab: "Open in new tab",
     invalidPage: "Enter a slide number from 1 to 12.",
   },
 } as const;
@@ -298,7 +298,8 @@ describe("multilingual installed smoke", () => {
     await expect(root.$('[data-action="toggle-fullscreen"]')).toHaveText(
       expected.fullscreen,
     );
-    await expect(root.$('[data-action="open-externally"]')).toHaveText(
+    await expect(root.$('[data-action="open-externally"]')).toHaveAttribute(
+      "aria-label",
       expected.external,
     );
     await expect(root.$('[data-action="copy-diagnostics"]')).toHaveAttribute(
@@ -449,7 +450,7 @@ describe("multilingual installed smoke", () => {
     );
     await embed.waitForExist({ timeout: 10_000 });
     await expect(embed).toHaveAttribute("aria-label", expected.embedCurrent);
-    await expect(embed.$("a.internal-link")).toHaveText(expected.openPresentation);
+    await expect(embed.$('[data-action="open-in-tab"]')).toHaveAttribute("aria-label", expected.openInTab);
 
     expect(await vaultSha256(path)).toBe(before);
     expect(await vaultSha256(speakerNotesPath)).toBe(speakerNotesBefore);

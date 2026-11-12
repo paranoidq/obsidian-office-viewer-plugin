@@ -9,8 +9,13 @@ in Obsidian Community Plugins.
 
 - PPTX and DOCX packages are inspected before renderer allocation.
 - ZIP entry, expanded-size, media, and XML limits bound resource use.
-- Macros, VBA, ActiveX, embedded executable content, and external media are
-  rejected and never executed or fetched.
+- OOXML checks reject or remove macros, VBA, ActiveX, embedded executable
+  content, and external media before rendering.
+- In the macOS development build, legacy conversion uses a temporary
+  LibreOffice profile that disables macros and active embedded content.
+  The converter runs with network access blocked and writes restricted to
+  its temporary directory. The converted OOXML still passes the existing
+  package checks.
 - External hyperlinks are not followed automatically; DOCX links are limited
   to `http`, `https`, and `mailto` after an explicit click.
 - Source files are read-only and are never modified by the viewer.

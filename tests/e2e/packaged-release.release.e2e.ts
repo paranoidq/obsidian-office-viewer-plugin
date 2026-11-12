@@ -36,7 +36,7 @@ describe("packaged release lifecycle", () => {
     const docx = await browser.$(
       '.office-viewer-docx-shell[data-state="ready"]',
     );
-    await expect(docx).toHaveText(
+    await expect(docx.$("section.docx")).toHaveText(
       expect.stringContaining("generated paragraph has no native identity"),
     );
     await docx.$('[data-action="open-docx-search"]').click();

@@ -88,10 +88,10 @@ containing sensitive content, filenames, paths, slide text, or images.
   field; `Escape` closes it. Search covers visible main-body text in the current
   document only. Results are one entry per matching paragraph, with a match
   count and excerpt, and jump to a visible session-only highlight.
-- Very large documents use a clearly labelled simplified reading mode with a
-  bounded DOM. Detected content that cannot be represented is marked in flow
-  with a document-level notice.
-- DOCX does not create stable paragraph references, embeds, companion notes,
+- DOCX opens in full layout. Use the **Simplified view** toolbar icon in a tab
+  or embed to switch to the lighter reading view and back. Detected content
+  that cannot be represented is marked in flow with a document-level notice.
+- DOCX does not create stable paragraph references, companion notes,
   persistent reading positions, or a Vault-wide search index.
 
 **Thumbnails**
@@ -125,12 +125,14 @@ containing sensitive content, filenames, paths, slide text, or images.
 - Select visible text on the current slide to use **Copy selected text with
   source**. Ordinary `Cmd+C` / `Ctrl+C` remains unchanged; the explicit action
   copies the selected text followed by the stable slide reference.
-- In Live Preview, only a canonical PPTX single-slide embed that is the sole
-  non-whitespace content on its line becomes an inline widget. Cursor,
-  selection, or a click on the slide canvas reveals the exact Markdown; only
-  the explicit source action opens the PPTX. Source mode always shows syntax.
-  Plain `![[deck.pptx]]`, prose-mixed, or multi-embed lines stay ordinary
-  Markdown.
+- Use `![[deck.pptx]]` or `![[report.docx]]` to preview a whole file inside
+  a note. PPTX keeps the original slide aspect ratio and lets you page
+  through the deck. DOCX keeps paper dimensions, margins, recorded page
+  breaks and body formatting where possible. The icon at the upper right
+  opens the source in the system's default application.
+- In Live Preview, put a whole-file embed or a canonical single-slide embed on
+  its own line. Moving the cursor or selection onto the embed reveals the
+  Markdown. Source mode always shows syntax.
 - Deleted slides and missing presentations fail explicitly without silently
   falling back to an ordinal position.
 
@@ -161,8 +163,9 @@ containing sensitive content, filenames, paths, slide text, or images.
 
 - Corrupted, encrypted, or otherwise unreadable PPTX or DOCX files show a clear
   explanation rather than a blank screen or a cryptic error.
-- Legacy `.ppt` files are recognized and explained without attempting to parse
-  them. Legacy `.doc` and macro-enabled `.docm` are not registered.
+- The release shows an external-open option for legacy `.ppt` files.
+  The macOS development package can preview binary `.ppt` and `.doc` files
+  using a local LibreOffice installation.
 - Compatible files that run into a rendering problem show a warning while
   keeping the last readable slide or document content visible when possible.
 
@@ -321,12 +324,12 @@ GitHub Release.
 
 ## Current boundaries
 
-- `.pptx` and `.docx` are parsed. Legacy `.ppt` receives an explicit local
-  explanation and external-open fallback; legacy `.doc` and macro-enabled
-  `.docm` are not registered.
+- The release parses `.pptx` and `.docx` in Obsidian. The macOS development
+  package can also preview Office 97–2003 files with `![[deck.ppt]]` and
+  `![[report.doc]]`. It converts temporary copies with LibreOffice and keeps
+  the external-open action pointed at the original file.
 - Read-only and local; the plugin never writes back to the source file.
 - Desktop Obsidian only; mobile and tablet are not supported.
-- No Office, LibreOffice, PDF conversion, cloud renderer, or document server.
 - Normal viewing does not upload presentation or document content, follow
   external relationships, execute macros/scripts, or make a network request.
 - Rendering is a readable preview, not pixel-perfect PowerPoint or Word
@@ -337,9 +340,9 @@ GitHub Release.
   warnings only when **Diagnostic summary** is enabled. Unknown PowerPoint or
   Word differences may still exist.
 - Privacy and security details are in `PRIVACY.md` and `SECURITY.md`.
-- Editing, saving, animations, legacy `.ppt`/`.doc` parsing, OCR, Vault-wide
-  search, main-slide search highlighting, DOCX paragraph references or embeds,
-  multi-slide or full-deck embeds, prose-mixed or multi-embed Live Preview
+- Editing, saving, animations, OCR, Vault-wide
+  search, main-slide search highlighting, DOCX paragraph references,
+  prose-mixed or multi-embed Live Preview
   lines, telemetry, accounts, licensing, and cloud services are out of scope.
 
 ## Test fixture

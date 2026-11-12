@@ -1,21 +1,19 @@
-import { DocxOpenError } from "../docx-open-error";
 import type {
   DocxSemanticModel,
   DocxSemanticParagraph,
 } from "../docx-semantic-model";
 import type {
+  DocxRenderMode,
   DocxRendererAdapter,
   DocxRendererSession,
 } from "./docx-renderer-adapter";
 
 export interface BoundedDocxRendererOptions {
-  readonly largeParagraphThreshold: number;
   readonly windowSize: number;
   readonly unavailablePlaceholder: string;
 }
 
 const DEFAULT_OPTIONS: BoundedDocxRendererOptions = {
-  largeParagraphThreshold: 1_000,
   windowSize: 240,
   unavailablePlaceholder: "This document content cannot be displayed.",
 };
@@ -116,11 +114,6 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
     options: Partial<BoundedDocxRendererOptions> = {},
   ) {
     this.options = {
-      largeParagraphThreshold: positiveInteger(
-        options.largeParagraphThreshold ??
-          DEFAULT_OPTIONS.largeParagraphThreshold,
-        "largeParagraphThreshold",
-      ),
       windowSize: positiveInteger(
         options.windowSize ?? DEFAULT_OPTIONS.windowSize,
         "windowSize",
@@ -136,35 +129,17 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
     container: HTMLElement,
     model: DocxSemanticModel,
     signal: AbortSignal,
+    mode: DocxRenderMode = "full",
   ): Promise<DocxRendererSession> {
-    if (model.paragraphs.length <= this.options.largeParagraphThreshold) {
-      try {
-        return await this.delegate.open(buffer, container, model, signal);
-      } catch (error) {
-        signal.throwIfAborted();
-        if (
-          !(error instanceof DocxOpenError) ||
-          error.category !== "incompatible"
-        ) {
-          throw error;
-        }
-        // Preview could not bind safely: fall back to semantic reading instead
-        // of failing the whole open.
-        return this.openBoundedSemantic(container, model, signal, [
-          "preview-unavailable-simplified-rendering",
-        ]);
-      }
-    }
-    return this.openBoundedSemantic(container, model, signal, [
-      "large-document-simplified-rendering",
-    ]);
+    return mode === "simplified"
+      ? this.openBoundedSemantic(container, model, signal)
+      : this.delegate.open(buffer, container, model, signal);
   }
 
   private async openBoundedSemantic(
     container: HTMLElement,
     model: DocxSemanticModel,
     signal: AbortSignal,
-    warnings: readonly string[],
   ): Promise<DocxRendererSession> {
     signal.throwIfAborted();
 
@@ -265,7 +240,7 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
     return {
       candidate: "bounded-semantic",
       paragraphElements: mounted,
-      warnings,
+      warnings: [],
       managesUnavailableContent: true,
       revealParagraph: (ordinal) => {
         if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > count) {

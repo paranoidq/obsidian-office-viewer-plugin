@@ -16,6 +16,11 @@ import {
   type DecorationSet,
 } from "@codemirror/view";
 import type { MessageTranslator } from "./i18n";
+import { mountOfficeFileEmbed, type OfficeFileEmbedOptions } from "./office-file-embed";
+import {
+  matchStandaloneOfficeFileEmbedLine,
+  type OfficeFileEmbedTarget,
+} from "./office-file-embed-target";
 import type { PptxRendererAdapter } from "./renderer/pptx-renderer-adapter";
 import {
   SlideEmbedController,
@@ -44,6 +49,40 @@ export interface LivePreviewSlideEmbedOptions<
   readonly showDiagnostics: () => boolean;
   readonly openExternally?: (file: TFile) => Promise<void>;
   readonly openSource?: (linkTarget: string, notePath: string) => void | Promise<void>;
+  readonly officeFiles?: OfficeFileEmbedOptions<TFile>;
+}
+
+class LivePreviewOfficeFileWidget<TFile> extends WidgetType {
+  private cleanup: (() => void) | undefined;
+
+  constructor(
+    private readonly target: OfficeFileEmbedTarget,
+    private readonly notePath: string,
+    private readonly options: OfficeFileEmbedOptions<TFile>,
+  ) {
+    super();
+  }
+
+  override eq(other: LivePreviewOfficeFileWidget<TFile>): boolean {
+    return this.target.sourcePath === other.target.sourcePath
+      && this.notePath === other.notePath
+      && this.options === other.options;
+  }
+
+  override toDOM(view: EditorView): HTMLElement {
+    const host = view.dom.ownerDocument.createElement("div");
+    this.cleanup = mountOfficeFileEmbed(host, this.target, this.notePath, this.options);
+    return host;
+  }
+
+  override destroy(): void {
+    this.cleanup?.();
+    this.cleanup = undefined;
+  }
+
+  override ignoreEvent(): boolean {
+    return true;
+  }
 }
 
 class LivePreviewSlideEmbedWidget<
@@ -75,6 +114,7 @@ class LivePreviewSlideEmbedWidget<
     host.remove();
     const file = this.options.resolveFile(this.sourcePath, this.notePath);
     const { options, notePath, sourcePath, target, from } = this;
+    const { openSource } = options;
     this.controller = new SlideEmbedController(host, {
       readBinary: options.readBinary,
       renderer: options.renderer,
@@ -82,19 +122,14 @@ class LivePreviewSlideEmbedWidget<
       messages: options.messages,
       showDiagnostics: options.showDiagnostics,
       openExternally: options.openExternally,
+      openSource: openSource === undefined
+        ? undefined
+        : (linkTarget) => openSource(linkTarget, notePath),
     });
     this.controller.mount({ file, sourcePath, target });
     if (file !== null) {
       this.stopObserving = observeSlideEmbedVisibility(host, (visible) => {
         this.controller?.setVisible(visible);
-      });
-    }
-    const sourceLink = host.querySelector<HTMLAnchorElement>("a.internal-link");
-    if (sourceLink !== null && options.openSource !== undefined) {
-      sourceLink.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        void options.openSource!(sourceLink.dataset.href ?? sourcePath, notePath);
       });
     }
     host.addEventListener("click", (event) => {
@@ -104,6 +139,9 @@ class LivePreviewSlideEmbedWidget<
         return;
       }
       if (el.closest("a.internal-link, [data-action='open-externally']")) return;
+      const selection = host.ownerDocument.getSelection();
+      if (selection !== null && !selection.isCollapsed
+        && host.contains(selection.anchorNode) && host.contains(selection.focusNode)) return;
       event.preventDefault();
       event.stopPropagation();
       view.dispatch({ selection: EditorSelection.cursor(from + 1) });
@@ -176,7 +214,11 @@ function buildDecorations<TFile extends SlideEmbedSourceFile>(
     ) {
       lastVisitedLine = lineNumber;
       const line = state.doc.line(lineNumber);
-      const match = matchStandaloneSlideEmbedLine(line.text);
+      const slideMatch = matchStandaloneSlideEmbedLine(line.text);
+      const officeMatch = slideMatch === null && options.officeFiles !== undefined
+        ? matchStandaloneOfficeFileEmbedLine(line.text)
+        : null;
+      const match = slideMatch ?? officeMatch;
       if (match === null) continue;
       const from = line.from + match.fromOffset;
       const to = line.from + match.toOffset;
@@ -185,17 +227,16 @@ function buildDecorations<TFile extends SlideEmbedSourceFile>(
         || selectionTouches(state, from, to)
       ) continue;
       const blockTo = lineNumber < state.doc.lines ? line.to + 1 : to;
+      const widget = slideMatch !== null
+        ? new LivePreviewSlideEmbedWidget(
+            from, slideMatch.sourcePath, slideMatch.target, notePath, options,
+          )
+        : new LivePreviewOfficeFileWidget(officeMatch!.target, notePath, options.officeFiles!);
       builder.add(
         line.from,
         blockTo,
         Decoration.replace({
-          widget: new LivePreviewSlideEmbedWidget(
-            from,
-            match.sourcePath,
-            match.target,
-            notePath,
-            options,
-          ),
+          widget,
           block: true,
         }),
       );

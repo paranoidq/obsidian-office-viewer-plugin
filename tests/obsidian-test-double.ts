@@ -4,6 +4,13 @@ import { vi } from "vitest";
 export const getLanguage = vi.fn(() => "en");
 export const apiVersion = "1.13.1";
 
+export function parseLinktext(linktext: string): { path: string; subpath: string } {
+  const fragment = linktext.indexOf("#");
+  return fragment < 0
+    ? { path: linktext, subpath: "" }
+    : { path: linktext.slice(0, fragment), subpath: linktext.slice(fragment) };
+}
+
 /** Stand-in for Obsidian's lucide icon injector. */
 export function setIcon(parent: HTMLElement, iconId: string): void {
   parent.replaceChildren();

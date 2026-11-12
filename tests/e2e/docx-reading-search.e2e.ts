@@ -31,11 +31,11 @@ describe("installed DOCX reading and search", () => {
       '.workspace-leaf.mod-active .office-viewer-docx-shell[data-state="ready"]',
     );
     await expect(root).toExist();
-    await expect(root).toHaveText(expect.stringContaining("Market outlook"));
+    await expect(root.$("section.docx")).toHaveText(expect.stringContaining("Market outlook"));
     await expect(root.$('[data-action="open-docx-search"]')).toExist();
     await expect(
       root.$('[data-action="open-externally"]'),
-    ).toHaveText("Open in default application");
+    ).toHaveAttribute("aria-label", "Open in default application");
     await expect(root.$("[data-office-viewer-brand]")).toExist();
     await expect(root.$(".office-viewer-brand__product")).toHaveText(
       "Office Viewer",
@@ -51,7 +51,9 @@ describe("installed DOCX reading and search", () => {
         ".workspace-leaf.mod-active .office-viewer-docx-reading-body",
       );
       if (readingBody === null) throw new Error("Missing DOCX reading body");
-      const paragraph = readingBody.querySelector<HTMLElement>(
+      const renderedBody = readingBody.querySelector(".office-viewer-docx--paged")?.shadowRoot
+        ?? readingBody;
+      const paragraph = renderedBody.querySelector<HTMLElement>(
         "[data-docx-paragraph-ordinal]",
       );
       if (paragraph === null) throw new Error("Missing rendered DOCX paragraph");
@@ -148,6 +150,8 @@ describe("installed DOCX reading and search", () => {
     const root = await browser.$(
       '.workspace-leaf.mod-active .office-viewer-docx-shell[data-state="ready"]',
     );
+    await expect(root).toHaveAttribute("data-renderer", "docx-preview");
+    await root.$('[data-action="toggle-docx-mode"]').click();
     await expect(root).toHaveAttribute("data-renderer", "bounded-semantic");
     expect(
       await browser.execute(() =>

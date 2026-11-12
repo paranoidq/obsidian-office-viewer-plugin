@@ -7,9 +7,12 @@ import rendererCandidates from "./src/renderer/renderer-candidates.json" with {
 };
 
 const production = process.argv[2] === "production";
+const devPackage = process.argv[3] === "dev";
 const rendererCandidate = process.env.PPTX_RENDERER_CANDIDATE ?? "aiden";
 const rendererTestAdapter = process.env.PPTX_RENDERER_TEST_ADAPTER;
-const outfile = process.env.PPTX_BUNDLE_OUTFILE ?? "main.js";
+const outfile = devPackage
+  ? "artifacts/dev/office-viewer-dev/main.js"
+  : process.env.PPTX_BUNDLE_OUTFILE ?? "main.js";
 
 if (!Object.hasOwn(rendererCandidates, rendererCandidate)) {
   throw new Error(
@@ -31,6 +34,7 @@ const context = await esbuild.context({
   external: [
     "obsidian",
     "electron",
+    "node:*",
     "@codemirror/autocomplete",
     "@codemirror/collab",
     "@codemirror/commands",
@@ -58,6 +62,10 @@ const context = await esbuild.context({
     "process.env.PPTX_RENDERER_VERSION": JSON.stringify(
       rendererCandidates[rendererCandidate].version,
     ),
+    "process.env.OFFICE_VIEWER_LEGACY_SOFFICE": JSON.stringify(devPackage
+      ? process.env.OFFICE_VIEWER_LEGACY_SOFFICE
+        ?? "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+      : ""),
   },
   plugins: [
     {

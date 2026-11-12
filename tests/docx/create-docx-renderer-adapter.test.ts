@@ -30,7 +30,7 @@ describe("production DOCX renderer", () => {
     expect(session.paragraphElements.size).toBe(model.paragraphs.length);
   });
 
-  it("uses bounded semantic rendering for the stress document", async () => {
+  it("opens the stress document in full layout unless simplified view is requested", async () => {
     const source = await fixture(
       "performance-stress-5000-paragraphs.docx",
     );
@@ -38,11 +38,17 @@ describe("production DOCX renderer", () => {
     const model = await inspectDocxPackage(source, signal);
     const container = document.createElement("div");
 
-    const session = await createDocxRendererAdapter().open(
+    const renderer = createDocxRendererAdapter();
+    const full = await renderer.open(source, container, model, signal);
+    expect(full.candidate).toBe("docx-preview");
+    expect(full.paragraphElements.size).toBe(5_000);
+    full.dispose();
+    const session = await renderer.open(
       source,
       container,
       model,
       signal,
+      "simplified",
     );
 
     expect(session.candidate).toBe("bounded-semantic");

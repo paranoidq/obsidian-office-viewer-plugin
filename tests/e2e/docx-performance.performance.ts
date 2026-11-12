@@ -79,6 +79,7 @@ describe("installed DOCX performance gates", () => {
     const stressRoot = await browser.$(
       '.workspace-leaf.mod-active .office-viewer-docx-shell[data-state="ready"]',
     );
+    await stressRoot.$('[data-action="toggle-docx-mode"]').click();
     await expect(stressRoot).toHaveAttribute("data-renderer", "bounded-semantic");
     const stressElements = await browser.execute(() =>
       document.querySelectorAll(

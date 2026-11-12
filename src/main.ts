@@ -5,6 +5,7 @@ import {
   getLanguage,
   Plugin,
   TFile,
+  type FileSystemAdapter,
   type MarkdownRenderChild,
 } from "obsidian";
 import manifest from "../manifest.json" with { type: "json" };
@@ -28,6 +29,9 @@ import { PresentationCompanionNoteService } from "./presentation-companion-note-
 import { DocxFileView, DOCX_VIEW_TYPE } from "./docx/docx-file-view";
 import { createDocxMessageTranslator } from "./docx/docx-messages";
 import { createDocxRendererAdapter } from "./docx/renderer/create-docx-renderer-adapter";
+import { processOfficeFileEmbeds, type OfficeFileEmbedOptions } from "./office-file-embed";
+import { createLegacyOfficePreview, LegacyOfficeUnavailable } from "./legacy-office-preview";
+import { registerOfficeTabOpening } from "./office-tab-opening";
 
 async function openExternalUrl(url: string): Promise<void> {
   const protocol = new URL(url).protocol;
@@ -137,6 +141,18 @@ export default class OfficeViewerPlugin extends Plugin {
         void companionNotes.handleDelete(file.path);
       }),
     );
+    const adapter = this.app.vault.adapter as Partial<FileSystemAdapter> | undefined;
+    const legacyPreview = createLegacyOfficePreview(
+      process.env.OFFICE_VIEWER_LEGACY_SOFFICE ?? "",
+      adapter?.getBasePath?.() ?? "",
+    );
+    const readPreviewBinary = (file: TFile, signal: AbortSignal) => {
+      const extension = file.extension.toLowerCase();
+      const readSource = () => this.app.vault.readBinary(file);
+      if (extension !== "ppt" && extension !== "doc") return readSource();
+      if (legacyPreview === undefined) throw new LegacyOfficeUnavailable();
+      return legacyPreview(extension, file.stat.size, readSource, signal);
+    };
     this.registerView(PPTX_VIEW_TYPE, (leaf) => {
       let view: PptxFileView;
       view = new PptxFileView(
@@ -160,22 +176,25 @@ export default class OfficeViewerPlugin extends Plugin {
         },
         messages,
         diagnosticEnvironment,
+        legacyPreview === undefined ? undefined : readPreviewBinary,
       );
       this.views.add(view);
       return view;
     });
     const docxMessages = createDocxMessageTranslator(language);
+    const docxRenderer = createDocxRendererAdapter({
+      pageLayout: true,
+      unavailablePlaceholder: docxMessages.text("unavailablePlaceholder"),
+    });
     const openExternally = createExternalOpenAction(this.app);
     this.registerView(DOCX_VIEW_TYPE, (leaf) => {
       let view: DocxFileView;
       view = new DocxFileView(
         leaf,
         {
-          renderer: createDocxRendererAdapter({
-            unavailablePlaceholder:
-              docxMessages.text("unavailablePlaceholder"),
-          }),
+          renderer: docxRenderer,
           messages: docxMessages,
+          readBinary: readPreviewBinary,
           openExternalUrl,
           openInDefaultApplication:
             openExternally === undefined
@@ -188,6 +207,43 @@ export default class OfficeViewerPlugin extends Plugin {
       return view;
     });
     const embedRenderer = createPptxRendererAdapter();
+    const presentationExtensions = releaseContract.extensionRoutes[PPTX_VIEW_TYPE];
+    const documentExtensions = legacyPreview === undefined
+      ? releaseContract.extensionRoutes[DOCX_VIEW_TYPE]
+      : [...releaseContract.extensionRoutes[DOCX_VIEW_TYPE], "doc"];
+    const officeExtensions = new Set([
+      ...presentationExtensions, ...documentExtensions,
+    ]);
+    const canPreview = (file: TFile) => officeExtensions.has(file.extension.toLowerCase());
+    const resolveFile = (sourcePath: string, notePath: string) =>
+      resolveSlideEmbedFile(this.app, sourcePath, notePath);
+    const openSource = (linkTarget: string, notePath: string) =>
+      this.app.workspace.openLinkText(linkTarget, notePath, "tab");
+    const officeFiles: OfficeFileEmbedOptions<TFile> = {
+      resolveFile: (sourcePath, notePath) => {
+        const file = resolveFile(sourcePath, notePath);
+        return file !== null
+          && sourcePath.toLowerCase().endsWith(`.${file.extension.toLowerCase()}`)
+          ? file
+          : null;
+      },
+      readBinary: readPreviewBinary,
+      openInTab: async (file) => {
+        if (!canPreview(file)) throw new Error("No preview view is registered for this format");
+        await this.app.workspace.getLeaf("tab").openFile(file, { active: true });
+      },
+      openExternally,
+      openExternalUrl,
+      pptxRenderer: embedRenderer,
+      docxRenderer,
+      scheduler: embedScheduler,
+      messages,
+      docxMessages,
+    };
+    const lifecycle = {
+      register: (child: MarkdownRenderChild) => this.embedChildren.add(child),
+      unregister: (child: MarkdownRenderChild) => this.embedChildren.delete(child),
+    };
     this.registerMarkdownPostProcessor((element, context) => {
       processPptxSlideEmbeds(element, context, {
         app: this.app,
@@ -196,38 +252,32 @@ export default class OfficeViewerPlugin extends Plugin {
         messages,
         showDiagnostics: () => store.settings.diagnosticSummary,
         openExternally,
-        lifecycle: {
-          register: (child) => this.embedChildren.add(child),
-          unregister: (child) => this.embedChildren.delete(child),
-        },
+        openSource,
+        lifecycle,
       });
+      processOfficeFileEmbeds(element, context, officeFiles, lifecycle);
     }, 100);
     this.registerEditorExtension(
       createLivePreviewSlideEmbedExtension({
         livePreviewField: editorLivePreviewField,
         getSourcePath: (state) =>
           state.field(editorInfoField, false)?.file?.path ?? "",
-        resolveFile: (sourcePath, notePath) =>
-          resolveSlideEmbedFile(this.app, sourcePath, notePath),
+        resolveFile,
         readBinary: (file) => this.app.vault.readBinary(file),
         renderer: embedRenderer,
         scheduler: embedScheduler,
         messages,
         showDiagnostics: () => store.settings.diagnosticSummary,
         openExternally,
-        openSource: (linkTarget, notePath) => {
-          void this.app.workspace.openLinkText(linkTarget, notePath);
-        },
+        officeFiles,
+        openSource,
       }),
     );
-    this.registerExtensions(
-      releaseContract.extensionRoutes[PPTX_VIEW_TYPE],
-      PPTX_VIEW_TYPE,
-    );
-    this.registerExtensions(
-      releaseContract.extensionRoutes[DOCX_VIEW_TYPE],
-      DOCX_VIEW_TYPE,
-    );
+    this.registerExtensions(presentationExtensions, PPTX_VIEW_TYPE);
+    this.registerExtensions(documentExtensions, DOCX_VIEW_TYPE);
+    if (typeof this.app.workspace?.openLinkText === "function") {
+      this.register(registerOfficeTabOpening(this.app, canPreview));
+    }
   }
 
   override onunload(): void {

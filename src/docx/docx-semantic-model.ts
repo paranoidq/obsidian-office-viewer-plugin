@@ -812,6 +812,7 @@ async function convertEmbeddedWindowsMetafiles(
 export async function createSafeDocxRendererBuffer(
   buffer: ArrayBuffer,
   signal: AbortSignal,
+  prepareLayout?: (document: Document) => void,
 ): Promise<ArrayBuffer> {
   signal.throwIfAborted();
   let zip: JSZip;
@@ -950,6 +951,7 @@ export async function createSafeDocxRendererBuffer(
     ).remove();
   }
   signal.throwIfAborted();
+  prepareLayout?.(document);
   if (relationshipsPart !== null && relationshipDocument !== null) {
     zip.file(
       relationshipsPart.name,

@@ -89,7 +89,7 @@ describe("DOCX reading and search view", () => {
     ).not.toBeNull();
     expect(
       root.querySelector('[data-action="open-externally"]')
-        ?.textContent,
+        ?.getAttribute("aria-label"),
     ).toBe("Open in default application");
     const brand = root.querySelector("[data-office-viewer-brand]")!;
     expect(brand).not.toBeNull();
@@ -162,7 +162,7 @@ describe("DOCX reading and search view", () => {
     expect(root.querySelector('[data-action="retry"]')?.textContent).toBe(
       "Retry",
     );
-    expect(root.querySelector('[data-action="open-externally"]')?.textContent)
+    expect(root.querySelector('[data-action="open-externally"]')?.getAttribute("aria-label"))
       .toBe("Open in default application");
     expect(root.querySelectorAll("[data-office-viewer-brand]")).toHaveLength(1);
     expect(
@@ -179,8 +179,8 @@ describe("DOCX reading and search view", () => {
       vault: { readBinary: vi.fn(async () => source) },
     };
     const renderer = new BoundedDocxRendererAdapter(
-      { open: vi.fn() } as unknown as DocxRendererAdapter,
-      { largeParagraphThreshold: 3, windowSize: 3 },
+      new SemanticTestRenderer(),
+      { windowSize: 3 },
     );
     const view = new DocxFileView(
       { app } as never,
@@ -204,9 +204,12 @@ describe("DOCX reading and search view", () => {
     const root = view.contentEl.querySelector<HTMLElement>(
       ".office-viewer-docx-shell",
     )!;
-    expect(root.textContent).toContain(
-      "This large document is shown in a simplified reading mode.",
-    );
+    expect(root.dataset.renderer).toBe("docx-preview");
+    const toggle = root.querySelector<HTMLButtonElement>('[data-action="toggle-docx-mode"]')!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    toggle.click();
+    await vi.waitFor(() => expect(root.dataset.renderer).toBe("bounded-semantic"));
+    expect(root.textContent).toContain("Showing simplified view.");
     expect(
       root.querySelectorAll(".office-viewer-docx-reading-body *").length,
     ).toBeLessThanOrEqual(20);
@@ -230,5 +233,12 @@ describe("DOCX reading and search view", () => {
     expect(
       root.querySelectorAll(".office-viewer-docx-reading-body *").length,
     ).toBeLessThanOrEqual(20);
+    toggle.click();
+    await vi.waitFor(() => expect(root.dataset.renderer).toBe("docx-preview"));
+    expect(root.querySelector('[data-docx-paragraph-ordinal="11"]')?.getAttribute("aria-current"))
+      .toBe("true");
+    expect(search.value).toBe("中文段落");
+    expect(app.vault.readBinary).toHaveBeenCalledOnce();
+    view.dispose();
   });
 });

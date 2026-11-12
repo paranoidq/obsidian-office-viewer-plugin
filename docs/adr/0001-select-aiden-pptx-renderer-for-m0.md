@@ -86,6 +86,11 @@ lifecycle, and a different trust boundary. They remain fallback research
 options if browser-native rendering cannot meet later real-world fidelity
 requirements.
 
+The later local macOS development build uses a sandboxed LibreOffice process
+to prepare a temporary OOXML derivative of Office 97–2003 files. Aiden
+continues to render PPTX. Stable slide references require IDs from the
+original PPTX package.
+
 ### Commercial Office rendering SDK
 
 Not selected while the browser-native candidate meets M0. Reconsider only if

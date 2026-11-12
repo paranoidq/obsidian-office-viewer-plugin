@@ -17,7 +17,7 @@ npm run release:check
 ```
 
 Keep renderer-specific objects behind their PPTX or DOCX adapter, read Office
-file bytes only through the Vault API, and do not add network, conversion, editing,
+file bytes only through the Vault API, and do not add network, editing,
 telemetry, or source-write behavior. Any English user-facing message change
 must update the Simplified and Traditional Chinese catalogs and retain the
 human-review evidence described in `docs/globalization/multilingual-ui.md`.
@@ -65,3 +65,17 @@ Performance misses are evidence and must not be hidden by loosening latency,
 lifecycle, or resource budgets. Committed performance reports remain immutable
 evidence snapshots; the sole current bundle-size allowance is the documented
 5% regression budget in `docs/performance/README.md`.
+
+## Local development package
+
+Run `npm run build:dev` to create `artifacts/dev/office-viewer-dev/`. Copy that
+directory to the test vault's `.obsidian/plugins/` folder. Disable the regular
+`office-viewer` plugin in that vault before enabling `office-viewer-dev`;
+both register the same Office file extensions.
+
+On macOS, the development package uses LibreOffice for previews of Office
+97–2003 `.ppt` and `.doc` files. The build uses
+`/Applications/LibreOffice.app/Contents/MacOS/soffice` by default. Set
+`OFFICE_VIEWER_LEGACY_SOFFICE` to the absolute path of another installed
+`soffice` executable when building. Conversion uses a temporary profile
+and the macOS sandbox. The output goes through the existing OOXML readers.

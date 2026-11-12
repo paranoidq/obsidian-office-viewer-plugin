@@ -1,3 +1,4 @@
+import { registerOfficeEmbedTextCopy } from "./office-embed-text-copy";
 import type {
   PptxCompatibilityWarningCategory,
   PptxRendererAdapter,
@@ -42,7 +43,7 @@ import {
 } from "./speaker-note-content";
 
 export interface VaultBinaryReader<FileRef> {
-  readBinary(file: FileRef): Promise<ArrayBuffer>;
+  readBinary(file: FileRef, signal: AbortSignal): Promise<ArrayBuffer>;
 }
 
 export interface PptxViewSessionDiagnostics {
@@ -103,6 +104,7 @@ export interface PptxViewOptions<FileRef> {
       selectedText: string,
     ): Promise<void>;
   };
+  supportsPptxActions?(file: FileRef): boolean;
   /**
    * File-level Presentation companion note action. Independent of Vault APIs
    * inside the session; the host supplies create/open behavior.
@@ -404,7 +406,10 @@ export class PptxViewSession<FileRef> {
     });
 
     let copyTarget: SlideReferenceTarget | null = null;
-    const copyReferenceButton = this.options.slideReferences === undefined
+    const slideReferences = this.options.supportsPptxActions?.(file) === false
+      ? undefined
+      : this.options.slideReferences;
+    const copyReferenceButton = slideReferences === undefined
       ? null
       : headerActions.createEl("button", {
           type: "button",
@@ -417,7 +422,7 @@ export class PptxViewSession<FileRef> {
     if (copyReferenceButton) {
       decorateOfficeViewerIconButton(copyReferenceButton, "lucide-link");
     }
-    const copyEmbedButton = this.options.slideReferences === undefined
+    const copyEmbedButton = slideReferences === undefined
       ? null
       : headerActions.createEl("button", {
           type: "button",
@@ -431,7 +436,7 @@ export class PptxViewSession<FileRef> {
       decorateOfficeViewerIconButton(copyEmbedButton, "lucide-panel-top");
     }
     const copyNotesButton =
-      this.options.slideReferences?.copyNotes === undefined
+      slideReferences?.copyNotes === undefined
         ? null
         : headerActions.createEl("button", {
             type: "button",
@@ -445,7 +450,7 @@ export class PptxViewSession<FileRef> {
       decorateOfficeViewerIconButton(copyNotesButton, "lucide-notebook-text");
     }
     const copySelectionButton =
-      this.options.slideReferences?.copySelection === undefined
+      slideReferences?.copySelection === undefined
         ? null
         : headerActions.createEl("button", {
             type: "button",
@@ -504,7 +509,7 @@ export class PptxViewSession<FileRef> {
       cls: "pptx-viewer__slide",
     });
     const floatingCopySelectionButton =
-      this.options.slideReferences?.copySelection === undefined
+      slideReferences?.copySelection === undefined
         ? null
         : slideStage.createEl("button", {
             type: "button",
@@ -545,7 +550,7 @@ export class PptxViewSession<FileRef> {
 
     try {
       const openedAt = performance.now();
-      const buffer = await this.reader.readBinary(file);
+      const buffer = await this.reader.readBinary(file, controller.signal);
       this.diagnosticSourceBytes = buffer.byteLength;
       controller.signal.throwIfAborted();
       this.setLifecyclePhase("adapter-opening");
@@ -560,6 +565,7 @@ export class PptxViewSession<FileRef> {
         return;
       }
       this.rendererSession = rendererSession;
+      this.runCleanups.add(registerOfficeEmbedTextCopy(slideContainer));
       this.diagnosticSlideCount = rendererSession.slideCount;
       this.diagnosticThumbnails = rendererSession.capabilities.thumbnails;
       this.diagnosticPrefetch = rendererSession.capabilities.prefetch;
@@ -1509,7 +1515,8 @@ export class PptxViewSession<FileRef> {
     actionStatus: HTMLElement,
     resolveFullscreen: () => PptxFullscreenActions,
   ): HTMLButtonElement | null {
-    if (this.options.companionNote === undefined) return null;
+    if (this.options.companionNote === undefined
+      || this.options.supportsPptxActions?.(file) === false) return null;
     const button = createEl("button", {
       type: "button",
       title: this.messages.text("companion.open"),
@@ -1590,9 +1597,13 @@ export class PptxViewSession<FileRef> {
     if (!this.options.openExternally) return null;
     const button = createEl("button", {
       type: "button",
-      text: this.messages.text("external.open"),
-      attr: { "data-action": "open-externally" },
+      attr: {
+        "data-action": "open-externally",
+        "aria-label": this.messages.text("external.open"),
+        title: this.messages.text("external.open"),
+      },
     });
+    decorateOfficeViewerIconButton(button, "lucide-external-link");
     button.addEventListener("click", () => {
       actionStatus.textContent = "";
       void this.options.openExternally?.(file).catch(() => {

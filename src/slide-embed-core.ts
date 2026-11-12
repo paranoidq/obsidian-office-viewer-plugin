@@ -1,4 +1,6 @@
 import type { MessageKey, MessageTranslator } from "./i18n";
+import { registerOfficeEmbedTextCopy } from "./office-embed-text-copy";
+import { decorateOfficeViewerIconButton } from "./office-viewer-chrome";
 import {
   PptxOpenError,
   type PptxOpenErrorCategory,
@@ -35,6 +37,7 @@ export interface SlideEmbedCorePorts<
   readonly scheduler: SlideEmbedScheduler;
   readonly messages: MessageTranslator;
   readonly showDiagnostics: () => boolean;
+  readonly openSource?: (linkTarget: string) => void | Promise<void>;
   readonly openExternally?: (file: TFile) => Promise<void>;
   readonly now?: () => number;
 }
@@ -98,6 +101,7 @@ export class SlideEmbedController<
   TFile extends SlideEmbedSourceFile = SlideEmbedSourceFile,
 > {
   private canvas: HTMLElement | null = null;
+  private unregisterTextCopy: (() => void) | undefined;
   private status: HTMLElement | null = null;
   private compatibility: HTMLElement | null = null;
   private input: SlideEmbedCoreInput<TFile> | null = null;
@@ -114,6 +118,8 @@ export class SlideEmbedController<
 
   mount(input: SlideEmbedCoreInput<TFile>): void {
     if (this.disposed) return;
+    this.unregisterTextCopy?.();
+    this.unregisterTextCopy = undefined;
     this.input = input;
     this.host.replaceChildren();
     this.host.classList.add("pptx-slide-embed");
@@ -152,6 +158,7 @@ export class SlideEmbedController<
     this.canvas = appendEmbedElement(this.host, "div", {
       className: "pptx-slide-embed__canvas",
     });
+    this.unregisterTextCopy = registerOfficeEmbedTextCopy(this.canvas);
     this.compatibility = appendEmbedElement(this.host, "div", {
       className: "pptx-slide-embed__compatibility",
       attributes: { role: "note" },
@@ -168,6 +175,8 @@ export class SlideEmbedController<
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.unregisterTextCopy?.();
+    this.unregisterTextCopy = undefined;
     this.releaseRenderingWindow();
   }
 
@@ -182,11 +191,35 @@ export class SlideEmbedController<
     const linkTarget = formatSlideReferenceLinkTarget(sourcePath, target);
     const sourceLink = appendEmbedElement(footer, "a", {
       className: "internal-link pptx-slide-embed__action",
-      text: this.ports.messages.text("reference.openPresentation"),
       attributes: { href: linkTarget },
     });
     sourceLink.dataset.href = linkTarget;
-    if (file !== null && this.ports.openExternally !== undefined) {
+    if (file === null) {
+      sourceLink.textContent = this.ports.messages.text("reference.openPresentation");
+    } else {
+      const label = this.ports.messages.text("fileEmbed.openInTab");
+      sourceLink.dataset.action = "open-in-tab";
+      sourceLink.setAttribute("aria-label", label);
+      sourceLink.title = label;
+      decorateOfficeViewerIconButton(sourceLink, "panel-top");
+    }
+    const actionStatus = appendEmbedElement(footer, "span", {
+      attributes: { role: "status", "aria-live": "polite" },
+    });
+    const { openSource, openExternally } = this.ports;
+    if (openSource !== undefined) {
+      sourceLink.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        actionStatus.textContent = "";
+        try {
+          await openSource(linkTarget);
+        } catch {
+          actionStatus.textContent = this.ports.messages.text("fileEmbed.openInTabFailure");
+        }
+      });
+    }
+    if (file !== null && openExternally !== undefined) {
       const externalButton = appendEmbedElement(footer, "button", {
         className: "pptx-slide-embed__action",
         text: this.ports.messages.text("external.open"),
@@ -195,19 +228,16 @@ export class SlideEmbedController<
           "data-action": "open-externally",
         },
       });
-      const externalStatus = appendEmbedElement(footer, "span", {
-        className: "pptx-slide-embed__external-status",
-        attributes: { role: "status", "aria-live": "polite" },
-      });
       externalButton.addEventListener("click", () => {
-        externalStatus.textContent = "";
-        void this.ports.openExternally!(file).catch(() => {
-          externalStatus.textContent = this.ports.messages.text(
+        actionStatus.textContent = "";
+        void openExternally(file).catch(() => {
+          actionStatus.textContent = this.ports.messages.text(
             "external.failure",
           );
         });
       });
     }
+    footer.append(actionStatus);
   }
 
   private now(): number {

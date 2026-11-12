@@ -54,16 +54,18 @@ export class PptxFileView extends FileView {
     private readonly state?: PptxFileViewState,
     private readonly messages: MessageTranslator = ENGLISH_MESSAGE_TRANSLATOR,
     diagnosticEnvironment?: DiagnosticEnvironment,
+    private readonly previewReader?: (file: TFile, signal: AbortSignal) => Promise<ArrayBuffer>,
   ) {
     super(leaf);
     this.contentEl.replaceChildren();
     const root = this.contentEl.createDiv();
     this.session = new PptxViewSession(
       root,
-      { readBinary: (file) => this.app.vault.readBinary(file) },
+      { readBinary: previewReader ?? ((file) => this.app.vault.readBinary(file)) },
       createPptxRendererAdapter(),
       {
         messages: this.messages,
+        supportsPptxActions: (file) => file.extension.toLowerCase() !== "ppt",
         openExternally: createExternalOpenAction(this.app),
         positions: state,
         thumbnailRail: state === undefined
@@ -163,8 +165,10 @@ export class PptxFileView extends FileView {
     if (file.extension.toLowerCase() === "ppt") {
       this.pendingReferenceTarget = undefined;
       this.releaseCompanionLeaf();
-      this.session.openUnsupportedLegacy(file, file.stat.size);
-      return;
+      if (this.previewReader === undefined) {
+        this.session.openUnsupportedLegacy(file, file.stat.size);
+        return;
+      }
     }
     const referenceTarget = this.pendingReferenceTarget;
     this.pendingReferenceTarget = undefined;

@@ -18,6 +18,7 @@
     "fixtures:docx": "node scripts/generate-docx-exploration-fixtures.mjs",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && node esbuild.config.mjs production",
+    "build:dev": "npm run typecheck && node esbuild.config.mjs production dev && node scripts/package-dev.mjs",
     "build:aiden": "node scripts/run-renderer-candidate.mjs aiden build",
     "build:pptx-preview": "node scripts/run-renderer-candidate.mjs pptx-preview build",
     "test": "npm run build && vitest run --exclude tests/performance/performance-baseline.test.ts",

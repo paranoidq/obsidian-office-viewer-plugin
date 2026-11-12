@@ -3,15 +3,15 @@ import { DocxPreviewRendererAdapter } from "./docx-preview-renderer-adapter";
 
 export interface CreateDocxRendererOptions {
   readonly unavailablePlaceholder?: string;
+  readonly pageLayout?: boolean;
 }
 
 export function createDocxRendererAdapter(
   options: CreateDocxRendererOptions = {},
 ): BoundedDocxRendererAdapter {
   return new BoundedDocxRendererAdapter(
-    new DocxPreviewRendererAdapter(),
+    new DocxPreviewRendererAdapter(options.pageLayout),
     {
-      largeParagraphThreshold: 1_000,
       windowSize: 240,
       unavailablePlaceholder: options.unavailablePlaceholder,
     },

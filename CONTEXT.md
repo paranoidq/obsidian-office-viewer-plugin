@@ -183,6 +183,13 @@ canonical embed syntax; the rendered slide itself remains read-only and never
 edits the source presentation.
 _Avoid_: Editable slide, PPTX edit mode, Live Preview PPTX editor
 
+**Whole-file Office embed**:
+A local, read-only preview of a PPTX or DOCX inside an Obsidian note. A PPTX
+embed can navigate the deck while a DOCX embed previews the body with the
+source's recorded page layout. The embed can open the original file in the
+system's default application and does not target a stable slide or paragraph.
+_Avoid_: Slide embed, Paragraph reference
+
 ## Example dialogue
 
 > **Developer:** What does the first DOCX release promise?
