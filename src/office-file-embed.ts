@@ -1,9 +1,15 @@
 import { MarkdownRenderChild, type MarkdownPostProcessorContext } from "obsidian";
 import type { DocxMessageTranslator } from "./docx/docx-messages";
 import { createDocxModeButton } from "./docx/docx-mode-button";
+import { createDocxOutline, scrollToDocxHeading } from "./docx/docx-outline";
 import { DocxRenderSource } from "./docx/docx-render-source";
 import { inspectDocxPackage } from "./docx/docx-semantic-model";
-import type { DocxRenderMode, DocxRendererAdapter } from "./docx/renderer/docx-renderer-adapter";
+import { createDocxZoomControls } from "./docx/docx-zoom-controls";
+import type {
+  DocxRenderMode,
+  DocxRendererAdapter,
+  DocxRendererSession,
+} from "./docx/renderer/docx-renderer-adapter";
 import type { MessageTranslator } from "./i18n";
 import { LegacyOfficeUnavailable } from "./legacy-office-preview";
 import { registerOfficeEmbedTextCopy } from "./office-embed-text-copy";
@@ -74,6 +80,20 @@ export function mountOfficeFileEmbed<TFile>(
     ? createDocxModeButton(host.ownerDocument, docxMessages, (mode) => startPreview(mode))
     : null;
   if (modeToggle !== null) toolbar.append(modeToggle.button);
+  const zoomControls = format === "docx"
+    ? createDocxZoomControls(host.ownerDocument, docxMessages)
+    : null;
+  if (zoomControls !== null) toolbar.append(zoomControls.root);
+  let docxSession: DocxRendererSession | undefined;
+  const outline = format === "docx"
+    ? createDocxOutline(host.ownerDocument, docxMessages, (ordinal) => {
+      const element = docxSession?.revealParagraph(ordinal);
+      if (element == null) return false;
+      scrollToDocxHeading(body, element);
+      return true;
+    })
+    : null;
+  if (outline !== null) toolbar.append(outline.button);
   iconButton(toolbar, "open-in-tab", messages.text("fileEmbed.openInTab"), "panel-top")
     .addEventListener("click", (event) => {
       event.stopPropagation();
@@ -93,7 +113,9 @@ export function mountOfficeFileEmbed<TFile>(
         });
       });
   }
-  const body = host.createDiv({ cls: "office-file-embed__body" });
+  const layout = outline === null ? host : host.createDiv({ cls: "office-file-embed__docx-layout" });
+  if (outline !== null) layout.append(outline.panel);
+  const body = layout.createDiv({ cls: "office-file-embed__body" });
   const unregisterTextCopy = registerOfficeEmbedTextCopy(body);
   let disposeSession: (() => void) | undefined;
   let cancel: (() => void) | undefined;
@@ -187,6 +209,9 @@ export function mountOfficeFileEmbed<TFile>(
           }
           disposeSession?.();
           disposeSession = () => session.dispose();
+          docxSession = session;
+          outline?.setModel(docxSource.model);
+          zoomControls?.setZoom(session.zoom);
           renderedDocxMode = mode;
           host.dataset.renderer = session.candidate;
           host.dataset.state = "ready";
@@ -244,6 +269,9 @@ export function mountOfficeFileEmbed<TFile>(
     unregisterTextCopy();
     stopObserving();
     cancel?.();
+    zoomControls?.setZoom();
+    outline?.setModel();
+    docxSession = undefined;
     disposeSession?.();
     host.replaceChildren();
   };

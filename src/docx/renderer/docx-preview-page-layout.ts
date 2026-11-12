@@ -1,4 +1,63 @@
 const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const MAX_PREVIEW_MARGIN_PT = 24;
+const MIN_TABLE_SCALE = 0.65;
+
+function lengthInPoints(length: string): number | undefined {
+  if (length.endsWith("pt")) return Number.parseFloat(length);
+  if (length.endsWith("px")) return Number.parseFloat(length) * 0.75;
+  return undefined;
+}
+
+/** Trim page whitespace while keeping the page width and recorded breaks. */
+export function compactDocxPreviewMargins(page: HTMLElement): void {
+  const { style } = page;
+  let verticalTrim = 0;
+  for (const side of ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"] as const) {
+    const margin = style[side] === "" ? 72 : lengthInPoints(style[side]);
+    if (margin === undefined || margin <= MAX_PREVIEW_MARGIN_PT) continue;
+    style[side] = `${MAX_PREVIEW_MARGIN_PT}pt`;
+    if (side === "paddingTop" || side === "paddingBottom") {
+      verticalTrim += margin - MAX_PREVIEW_MARGIN_PT;
+    }
+  }
+  const height = lengthInPoints(style.minHeight);
+  if (verticalTrim > 0 && height !== undefined) {
+    style.minHeight = `${Math.max(0, height - verticalTrim).toFixed(2)}pt`;
+  }
+}
+
+/** Keep wide tables accessible inside docx-preview's clipped page. */
+export function fitWideDocxPageTables(
+  page: HTMLElement,
+  tables: readonly HTMLTableElement[],
+): void {
+  if (tables.length === 0) return;
+  const pageBounds = page.getBoundingClientRect();
+  if (pageBounds.width === 0) return;
+  for (const table of tables) {
+    const parent = table.parentElement;
+    if (parent === null || parent.classList.contains("office-viewer-docx-table-scroll")) continue;
+    const bounds = table.getBoundingClientRect();
+    const boxWidth = table.offsetWidth;
+    if (bounds.width === 0 || boxWidth === 0) continue;
+    const renderedWidth = Math.max(boxWidth, table.scrollWidth) * bounds.width / boxWidth;
+    if (bounds.left >= pageBounds.left - 1 &&
+      bounds.left + renderedWidth <= pageBounds.right + 1) continue;
+
+    const scroll = table.ownerDocument.createElement("div");
+    scroll.className = "office-viewer-docx-table-scroll";
+    table.before(scroll);
+    scroll.append(table);
+    table.style.width = `${boxWidth}px`;
+    table.style.float = "none";
+    for (const side of ["marginLeft", "marginRight"] as const) {
+      if (table.style[side] !== "auto") table.style[side] = "0";
+    }
+    const available = scroll.getBoundingClientRect().width;
+    const scale = Math.max(MIN_TABLE_SCALE, Math.min(1, available / renderedWidth));
+    table.style.setProperty("zoom", String(scale));
+  }
+}
 
 function child(parent: Element, name: string): Element | undefined {
   return Array.from(parent.children).find((element) =>

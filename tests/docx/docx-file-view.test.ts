@@ -103,6 +103,9 @@ describe("DOCX reading and search view", () => {
         ?.previousElementSibling,
     ).toBe(brand);
 
+    root.querySelector<HTMLElement>('[data-docx-paragraph-ordinal="1"]')!.click();
+    expect(root.querySelector(".is-active-docx-paragraph")).toBeNull();
+
     root
       .querySelector<HTMLButtonElement>('[data-action="open-docx-search"]')!
       .click();

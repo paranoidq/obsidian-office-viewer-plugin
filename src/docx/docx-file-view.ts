@@ -28,6 +28,8 @@ import type {
 } from "./renderer/docx-renderer-adapter";
 import { DocxRenderSource } from "./docx-render-source";
 import { createDocxModeButton } from "./docx-mode-button";
+import { createDocxOutline, scrollToDocxHeading } from "./docx-outline";
+import { createDocxZoomControls } from "./docx-zoom-controls";
 
 export const DOCX_VIEW_TYPE = "docx-viewer";
 
@@ -76,6 +78,8 @@ export class DocxFileView extends FileView {
   private readonly searchButton: HTMLButtonElement;
   private readonly externalButton: HTMLButtonElement;
   private readonly modeToggle: ReturnType<typeof createDocxModeButton>;
+  private readonly zoomControls: ReturnType<typeof createDocxZoomControls>;
+  private readonly outline: ReturnType<typeof createDocxOutline>;
   private readonly notices = createDiv();
   private readonly noticesIcon = createSpan();
   private readonly noticesText = createSpan();
@@ -128,6 +132,7 @@ export class DocxFileView extends FileView {
         void this.renderDocument(mode);
       },
     );
+    this.zoomControls = createDocxZoomControls(this.root.ownerDocument, dependencies.messages);
     this.notices.className = "office-viewer-docx-notices";
     this.notices.setAttribute("role", "status");
     this.notices.hidden = true;
@@ -149,14 +154,24 @@ export class DocxFileView extends FileView {
       getModel: () => this.model,
       currentParagraphOrdinal: () => this.activeParagraph?.ordinal ?? null,
       onNavigate: (paragraphOrdinal) => {
-        this.activateOrdinal(paragraphOrdinal, true);
+        this.activateOrdinal(paragraphOrdinal);
       },
       onDismiss: () => this.closeSearch(),
     });
+    this.outline = createDocxOutline(this.root.ownerDocument, dependencies.messages, (ordinal) => {
+      const element = this.rendererSession?.revealParagraph(ordinal);
+      if (element == null) return false;
+      this.setActiveParagraph(null);
+      scrollToDocxHeading(this.readingBody, element);
+      return true;
+    }, () => {
+      this.searchPanel.close();
+      this.updateSearchButton();
+    });
 
-    this.toolbar.primary.append(this.searchButton);
-    this.toolbar.secondary.append(this.modeToggle.button, this.externalButton);
-    this.main.append(this.searchRail, this.readingBody);
+    this.toolbar.primary.append(this.outline.button, this.searchButton);
+    this.toolbar.secondary.append(this.modeToggle.button, this.zoomControls.root, this.externalButton);
+    this.main.append(this.outline.panel, this.searchRail, this.readingBody);
     this.root.append(
       this.toolbar.root,
       this.notices,
@@ -200,6 +215,8 @@ export class DocxFileView extends FileView {
     this.abortController?.abort();
     const controller = new AbortController();
     this.abortController = controller;
+    this.zoomControls.setZoom();
+    this.outline.setModel();
     this.rendererSession?.dispose();
     this.rendererSession = null;
     this.renderSource = null;
@@ -212,7 +229,7 @@ export class DocxFileView extends FileView {
     delete this.root.dataset.firstReadableMs;
     delete this.root.dataset.searchReadyMs;
     this.model = null;
-    this.setActiveParagraph(null, false);
+    this.setActiveParagraph(null);
     this.searchPanel.close();
     this.updateSearchButton();
     this.restoreReadingShell();
@@ -277,13 +294,15 @@ export class DocxFileView extends FileView {
       }
       previous?.dispose();
       this.rendererSession = session;
+      this.zoomControls.setZoom(session.zoom);
       const model = source.model;
+      this.outline.setModel(model);
       if (session.managesUnavailableContent !== true) {
         this.installUnavailablePlaceholders(model, session);
       }
       this.searchButton.disabled = false;
       if (this.activeParagraph !== null) {
-        this.setActiveParagraph(this.activeParagraph, true);
+        this.setActiveParagraph(this.activeParagraph);
       } else if (scrollProgress > 0) {
         this.readingBody.scrollTop = scrollProgress *
           (this.readingBody.scrollHeight - this.readingBody.clientHeight);
@@ -320,6 +339,8 @@ export class DocxFileView extends FileView {
     this.abortController = null;
     this.searchPanel.dispose();
     this.unregisterTextCopy();
+    this.zoomControls.setZoom();
+    this.outline.setModel();
     this.rendererSession?.dispose();
     this.rendererSession = null;
     this.model = null;
@@ -331,6 +352,7 @@ export class DocxFileView extends FileView {
   }
 
   private openSearch(): void {
+    this.outline.close();
     if (this.searchPanel.isOpen) {
       this.searchPanel.open();
       return;
@@ -418,10 +440,7 @@ export class DocxFileView extends FileView {
     }
   }
 
-  private setActiveParagraph(
-    paragraph: DocxSemanticParagraph | null,
-    reveal: boolean,
-  ): void {
+  private setActiveParagraph(paragraph: DocxSemanticParagraph | null): void {
     this.activeParagraphElement?.classList.remove("is-active-docx-paragraph");
     this.activeParagraphElement?.removeAttribute("aria-current");
     this.activeParagraphElement = null;
@@ -430,23 +449,19 @@ export class DocxFileView extends FileView {
       this.searchPanel.syncCurrentResult();
       return;
     }
-    const element = reveal
-      ? this.rendererSession?.revealParagraph(paragraph.ordinal)
-      : this.rendererSession?.paragraphElements.get(paragraph.ordinal);
+    const element = this.rendererSession?.revealParagraph(paragraph.ordinal);
     if (element == null) return;
     this.activeParagraphElement = element;
     element.classList.add("is-active-docx-paragraph");
     element.setAttribute("aria-current", "true");
-    if (reveal) {
-      element.scrollIntoView({ block: "center", behavior: "auto" });
-    }
+    element.scrollIntoView({ block: "center", behavior: "auto" });
     this.searchPanel.syncCurrentResult();
   }
 
-  private activateOrdinal(ordinal: number, reveal: boolean): boolean {
+  private activateOrdinal(ordinal: number): boolean {
     const paragraph = this.model?.paragraphs[ordinal - 1];
     if (paragraph === undefined || paragraph.ordinal !== ordinal) return false;
-    this.setActiveParagraph(paragraph, reveal);
+    this.setActiveParagraph(paragraph);
     return true;
   }
 
@@ -492,24 +507,11 @@ export class DocxFileView extends FileView {
         ) ?? [];
       if (
         targets.length !== 1 ||
-        !this.activateOrdinal(
-          targets[0]?.paragraphOrdinal ?? Number.NaN,
-          true,
-        )
+        !this.activateOrdinal(targets[0]?.paragraphOrdinal ?? Number.NaN)
       ) {
         this.actionStatus.textContent =
           this.dependencies.messages.text("bookmarkUnavailable");
       }
-      return;
-    }
-    const paragraphElement = target.closest<HTMLElement>(
-      "[data-docx-paragraph-ordinal]",
-    );
-    const ordinal = Number(
-      paragraphElement?.dataset.docxParagraphOrdinal ?? Number.NaN,
-    );
-    if (Number.isSafeInteger(ordinal)) {
-      this.activateOrdinal(ordinal, false);
     }
   }
 
@@ -526,6 +528,8 @@ export class DocxFileView extends FileView {
   }
 
   private renderOpenError(error: unknown, retryRender?: () => void): void {
+    this.zoomControls.setZoom();
+    this.outline.setModel();
     this.readingBody.replaceChildren();
     this.rendererSession = null;
     this.searchPanel.close();
@@ -573,6 +577,6 @@ export class DocxFileView extends FileView {
 
   private restoreReadingShell(): void {
     if (this.main.contains(this.readingBody)) return;
-    this.main.replaceChildren(this.searchRail, this.readingBody);
+    this.main.replaceChildren(this.outline.panel, this.searchRail, this.readingBody);
   }
 }

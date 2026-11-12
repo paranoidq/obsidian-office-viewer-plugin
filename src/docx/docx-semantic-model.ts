@@ -2,6 +2,12 @@ import CFB from "cfb";
 import JSZip, { type JSZipObject } from "jszip";
 import { convertWindowsMetafileToPng } from "./convert-windows-metafile";
 import { DocxOpenError } from "./docx-open-error";
+import {
+  createDocxHeadingResolver,
+  orderDocxStylesForPreview,
+  wordChild,
+  wordValue,
+} from "./docx-heading-level";
 import { materializeDocxChartsAsImages } from "./materialize-docx-charts";
 
 const WORDPROCESSING_NAMESPACE =
@@ -77,6 +83,7 @@ export interface DocxSemanticParagraph {
   readonly text: string;
   readonly searchText: string;
   readonly styleId: string | null;
+  readonly headingLevel: number | null;
   readonly listItem: boolean;
   readonly tableDepth: number;
   readonly bookmarks: readonly string[];
@@ -234,6 +241,25 @@ function relationshipMap(document: Document): ReadonlyMap<string, Relationship> 
     });
   }
   return relationships;
+}
+
+function docxStylesPart(
+  zip: JSZip,
+  relationships: ReadonlyMap<string, Relationship>,
+): JSZipObject | null {
+  const relationship = Array.from(relationships.values()).find(
+    ({ type }) => type === `${OFFICE_RELATIONSHIP_NAMESPACE}/styles`,
+  );
+  if (relationship === undefined) return zip.file("word/styles.xml");
+  if (relationship.external) return null;
+  try {
+    const base = "https://docx.invalid/word/document.xml";
+    const part = new URL(relationship.target, base);
+    if (part.origin !== new URL(base).origin || part.search || part.hash) return null;
+    return zip.file(decodeURIComponent(part.pathname.slice(1)));
+  } catch {
+    return null;
+  }
 }
 
 function isDescendantOf(
@@ -538,22 +564,6 @@ function tableDepth(paragraph: Element): number {
   return depth;
 }
 
-function paragraphStyleId(paragraph: Element): string | null {
-  for (const properties of paragraph.getElementsByTagNameNS(
-    WORDPROCESSING_NAMESPACE,
-    "pPr",
-  )) {
-    if (properties.parentElement !== paragraph) continue;
-    for (const style of properties.getElementsByTagNameNS(
-      WORDPROCESSING_NAMESPACE,
-      "pStyle",
-    )) {
-      return style.getAttributeNS(WORDPROCESSING_NAMESPACE, "val");
-    }
-  }
-  return null;
-}
-
 function paragraphIsListItem(paragraph: Element): boolean {
   for (const properties of paragraph.getElementsByTagNameNS(
     WORDPROCESSING_NAMESPACE,
@@ -678,6 +688,10 @@ export async function inspectDocxPackage(
       : relationshipMap(await readXml(relationshipsPart, signal));
   rejectActiveContent(zip, contentTypes);
   verifyExternalRelationships(relationships, document);
+  const stylesPart = docxStylesPart(zip, relationships);
+  const headings = createDocxHeadingResolver(
+    stylesPart === null ? null : await readXml(stylesPart, signal),
+  );
 
   const body = document.getElementsByTagNameNS(
     WORDPROCESSING_NAMESPACE,
@@ -708,11 +722,15 @@ export async function inspectDocxPackage(
       }
       continue;
     }
+    const properties = wordChild(paragraph, "pPr");
+    const styleId = wordValue(properties, "pStyle");
+    const headingLevel = headings.level(properties, styleId);
     paragraphs.push({
       ordinal: paragraphs.length + 1,
       text,
       searchText: text.toLocaleLowerCase(),
-      styleId: paragraphStyleId(paragraph),
+      styleId,
+      headingLevel,
       listItem: paragraphIsListItem(paragraph),
       tableDepth: tableDepth(paragraph),
       bookmarks: paragraphBookmarks(paragraph),
@@ -952,6 +970,17 @@ export async function createSafeDocxRendererBuffer(
   }
   signal.throwIfAborted();
   prepareLayout?.(document);
+  if (prepareLayout !== undefined) {
+    const stylesPart = docxStylesPart(
+      zip, relationshipDocument === null ? new Map() : relationshipMap(relationshipDocument),
+    );
+    if (stylesPart !== null) {
+      const styles = await readXml(stylesPart, signal);
+      if (orderDocxStylesForPreview(styles)) {
+        zip.file(stylesPart.name, new XMLSerializer().serializeToString(styles));
+      }
+    }
+  }
   if (relationshipsPart !== null && relationshipDocument !== null) {
     zip.file(
       relationshipsPart.name,

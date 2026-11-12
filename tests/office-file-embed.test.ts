@@ -90,14 +90,14 @@ it("previews a whole deck in place and opens the resolved local source only on c
   expect(f.native.classList.contains("office-file-embed__native")).toBe(false);
 });
 
-it("keeps DOCX page geometry, fixed table columns, and readable single spacing", async () => {
+it("compacts DOCX margins while preserving page width, breaks, tables, and spacing", async () => {
   const input = await readFile(path.resolve("tests/vault/docx-exploration/read-search-only.docx"));
   const zip = await JSZip.loadAsync(input);
   const part = "word/document.xml";
   const xml = await zip.file(part)!.async("string");
   zip.file(part, xml.replace("<w:sectPr/>", `
     <w:p><w:r><w:br w:type="page"/></w:r></w:p>
-    <w:p><w:r><w:t>Second page content</w:t></w:r></w:p>
+    <w:p><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:r><w:t>Second page content</w:t></w:r></w:p>
     <w:tbl>
       <w:tblPr>
         <w:tblpPr w:leftFromText="180" w:rightFromText="180"
@@ -119,7 +119,7 @@ it("keeps DOCX page geometry, fixed table columns, and readable single spacing",
     </w:tbl>
     <w:sectPr>
       <w:pgSz w:w="11906" w:h="16838"/>
-      <w:pgMar w:left="1080" w:right="1080" w:top="1440" w:bottom="1440"/>
+      <w:pgMar w:left="1080" w:right="1080" w:top="240" w:bottom="1440"/>
     </w:sectPr>`));
   const buffer = await zip.generateAsync({ type: "arraybuffer" });
   const readBinary = vi.fn(async () => buffer);
@@ -131,8 +131,20 @@ it("keeps DOCX page geometry, fixed table columns, and readable single spacing",
       ?.querySelectorAll<HTMLElement>("section.docx");
     expect(pages).toHaveLength(2);
     expect(pages?.[0]?.style.width).toBe("595.3pt");
-    expect(pages?.[0]?.style.paddingLeft).toBe("54pt");
+    expect(pages?.[0]?.style.paddingLeft).toBe("24pt");
+    expect(pages?.[0]?.style.paddingRight).toBe("24pt");
+    expect(pages?.[0]?.style.paddingTop).toBe("12pt");
+    expect(pages?.[0]?.style.paddingBottom).toBe("24pt");
+    expect(pages?.[0]?.style.minHeight).toBe("793.9pt");
     expect(pages?.[1]?.textContent).toContain("Second page content");
+    const heading = pages?.[1]?.querySelector<HTMLElement>('[role="heading"][aria-level="3"]')!;
+    expect(heading.textContent).toBe("Second page content");
+    embed.querySelector<HTMLButtonElement>('[data-action="toggle-docx-outline"]')!.click();
+    const outlineEntry = embed.querySelector<HTMLButtonElement>('[data-action="docx-outline-entry"]')!;
+    expect(outlineEntry.textContent).toBe("Second page content");
+    expect(outlineEntry.dataset.docxHeadingLevel).toBe("3");
+    outlineEntry.click();
+    expect(outlineEntry.getAttribute("aria-current")).toBe("location");
     const table = pages?.[1]?.querySelector("table");
     expect(table?.style.tableLayout).toBe("fixed");
     expect(table?.style.width).toBe("481pt");
@@ -140,12 +152,25 @@ it("keeps DOCX page geometry, fixed table columns, and readable single spacing",
     expect(table?.style.marginTop).toBe("7pt");
     expect(table?.rows[0]?.cells[1]?.querySelector("p")?.style.lineHeight).toBe("normal");
     expect(table?.rows[1]?.cells[0]?.querySelector("p")?.style.lineHeight).toBe("15pt");
+    const ratio = embed.querySelector<HTMLButtonElement>('[data-action="docx-zoom-reset"]')!;
+    expect(ratio.textContent).toBe("100%");
+    embed.querySelector<HTMLButtonElement>('[data-action="docx-zoom-in"]')!.click();
+    expect(ratio.textContent).toBe("110%");
+    pages?.[0]?.dispatchEvent(new WheelEvent("wheel", {
+      ctrlKey: true, deltaY: -100, bubbles: true, composed: true, cancelable: true,
+    }));
+    expect(ratio.textContent).toBe("134%");
     const toggle = embed.querySelector<HTMLButtonElement>('[data-action="toggle-docx-mode"]')!;
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     toggle.click();
     await vi.waitFor(() => expect(embed.dataset.renderer).toBe("bounded-semantic"));
     expect(embed.textContent).toContain("Second page content");
+    expect(embed.querySelector('[role="heading"][aria-level="3"]')?.textContent)
+      .toBe("Second page content");
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(ratio.textContent).toBe("134%");
+    ratio.click();
+    expect(ratio.textContent).toBe("100%");
     toggle.click();
     await vi.waitFor(() => expect(embed.dataset.renderer).toBe("docx-preview"));
     expect(toggle.getAttribute("aria-pressed")).toBe("false");

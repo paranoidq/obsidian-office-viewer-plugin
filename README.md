@@ -127,9 +127,15 @@ containing sensitive content, filenames, paths, slide text, or images.
   copies the selected text followed by the stable slide reference.
 - Use `![[deck.pptx]]` or `![[report.docx]]` to preview a whole file inside
   a note. PPTX keeps the original slide aspect ratio and lets you page
-  through the deck. DOCX keeps paper dimensions, margins, recorded page
-  breaks and body formatting where possible. The icon at the upper right
-  opens the source in the system's default application.
+  through the deck. DOCX keeps the paper width, recorded page breaks and body
+  formatting where possible, with compact margins for on-screen reading.
+  The icon at the upper right opens the source in the system's default
+  application.
+- Use **−** and **+** in the Word preview toolbar to adjust zoom, and click
+  the current percentage to reset it. Holding `Ctrl` or `Cmd` while scrolling
+  over the preview also updates the zoom.
+- Open the Word preview's **Document outline** from the toolbar and click a
+  heading to jump to its location.
 - In Live Preview, put a whole-file embed or a canonical single-slide embed on
   its own line. Moving the cursor or selection onto the embed reveals the
   Markdown. Source mode always shows syntax.

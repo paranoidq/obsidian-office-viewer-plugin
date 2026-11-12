@@ -84,6 +84,31 @@ async function inspect(buffer: ArrayBuffer) {
 }
 
 describe("DOCX project-owned semantic model", () => {
+  it("resolves direct, inherited, and localized heading levels from the styles relationship", async () => {
+    const model = await inspect(await docxFixture({
+      relationships: `<Relationship Id="styles" Type="${R}/styles" Target="format/custom.xml"/>`,
+      extraParts: {
+        "word/format/custom.xml": `<w:styles xmlns:w="${W}">
+          <w:style w:type="paragraph" w:styleId="Custom"><w:basedOn w:val="Parent"/></w:style>
+          <w:style w:type="paragraph" w:styleId="Parent"><w:basedOn w:val="Base"/></w:style>
+          <w:style w:type="paragraph" w:styleId="Base"><w:pPr><w:outlineLvl w:val="2"/></w:pPr></w:style>
+          <w:style w:type="paragraph" w:styleId="Localized"><w:name w:val="标题 5"/></w:style>
+          <w:style w:type="paragraph" w:styleId="Cycle"><w:basedOn w:val="Cycle"/></w:style>
+        </w:styles>`,
+      },
+      body: [
+        paragraph(null, "Inherited", '<w:pPr><w:pStyle w:val="Custom"/></w:pPr>'),
+        paragraph(null, "Override", '<w:pPr><w:pStyle w:val="Custom"/><w:outlineLvl w:val="8"/></w:pPr>'),
+        paragraph(null, "Body", '<w:pPr><w:pStyle w:val="Custom"/><w:outlineLvl w:val="9"/></w:pPr>'),
+        paragraph(null, "Localized", '<w:pPr><w:pStyle w:val="Localized"/></w:pPr>'),
+        paragraph(null, "Built in", '<w:pPr><w:pStyle w:val="Heading1"/></w:pPr>'),
+        paragraph(null, "Cycle", '<w:pPr><w:pStyle w:val="Cycle"/></w:pPr>'),
+        paragraph(null, "Ordinary text"),
+      ].join(""),
+    }));
+    expect(model.paragraphs.map(({ headingLevel }) => headingLevel)).toEqual([3, 9, null, 5, 1, null, null]);
+  });
+
   it("extracts searchable final-view body paragraphs in canonical order", async () => {
     const buffer = await docxFixture({
       body: `

@@ -7,6 +7,8 @@ import type {
   DocxRendererAdapter,
   DocxRendererSession,
 } from "./docx-renderer-adapter";
+import { markDocxHeading } from "./docx-renderer-adapter";
+import { createDocxZoom } from "./docx-wheel-zoom";
 
 export interface BoundedDocxRendererOptions {
   readonly windowSize: number;
@@ -81,12 +83,12 @@ function paragraphElement(
   paragraph: DocxSemanticParagraph,
   placeholderText: string,
 ): HTMLElement {
-  const heading = /^Heading([1-6])$/i.exec(paragraph.styleId ?? "");
-  const tag = heading === null
+  const heading = paragraph.headingLevel;
+  const tag = heading === null || heading > 6
     ? paragraph.listItem
       ? "li"
       : "p"
-    : (`h${heading[1]}` as keyof HTMLElementTagNameMap);
+    : (`h${heading}` as keyof HTMLElementTagNameMap);
   const element = createEl(tag);
   appendParagraphText(element, paragraph);
   element.dataset.docxParagraphOrdinal = String(paragraph.ordinal);
@@ -97,6 +99,7 @@ function paragraphElement(
     element.classList.add("office-viewer-docx-bounded-table-paragraph");
     element.setAttribute("role", "cell");
   }
+  markDocxHeading(element, heading);
   for (const kind of paragraph.unavailableContent) {
     element.append(unavailablePlaceholder([kind], placeholderText));
   }
@@ -167,6 +170,7 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
     const count = model.paragraphs.length;
     const size = Math.min(this.options.windowSize, count);
     const estimatedParagraphHeight = 36;
+    let zoom = 1;
     let start = -1;
 
     const renderWindow = (targetOrdinal: number): HTMLElement | null => {
@@ -223,7 +227,7 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
 
     const onScroll = (): void => {
       const approximateOrdinal =
-        Math.floor(container.scrollTop / estimatedParagraphHeight) + 1;
+        Math.floor(container.scrollTop / (estimatedParagraphHeight * zoom)) + 1;
       if (
         approximateOrdinal < start + Math.floor(size / 4) ||
         approximateOrdinal > start + Math.floor((size * 3) / 4)
@@ -235,6 +239,10 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
     renderWindow(1);
     signal.throwIfAborted();
     container.replaceChildren(root);
+    const zoomControl = createDocxZoom(container, () => root, (scale) => {
+      zoom = scale;
+      root.style.setProperty("zoom", String(zoom));
+    });
     container.addEventListener("scroll", onScroll, { passive: true });
 
     return {
@@ -242,15 +250,17 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
       paragraphElements: mounted,
       warnings: [],
       managesUnavailableContent: true,
+      zoom: zoomControl,
       revealParagraph: (ordinal) => {
         if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > count) {
           return null;
         }
         const element = renderWindow(ordinal);
-        container.scrollTop = (ordinal - 1) * estimatedParagraphHeight;
+        container.scrollTop = (ordinal - 1) * estimatedParagraphHeight * zoom;
         return element;
       },
       dispose: () => {
+        zoomControl.dispose();
         container.removeEventListener("scroll", onScroll);
         mounted.clear();
         root.replaceChildren();

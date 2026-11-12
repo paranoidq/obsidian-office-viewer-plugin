@@ -1,11 +1,17 @@
 import { renderAsync } from "docx-preview";
 import { DocxOpenError } from "../docx-open-error";
 import type { DocxSemanticModel } from "../docx-semantic-model";
-import { prepareRenderedDocxPageSpacing } from "./docx-preview-page-layout";
+import {
+  compactDocxPreviewMargins,
+  fitWideDocxPageTables,
+  prepareRenderedDocxPageSpacing,
+} from "./docx-preview-page-layout";
+import { createDocxZoom } from "./docx-wheel-zoom";
 import {
   alignRenderedParagraphs,
   comparableParagraphText,
   mapRenderedParagraphs,
+  markDocxHeading,
   prepareRenderedDocxReadingLayout,
   sanitizeRenderedDocx,
   type DocxRendererAdapter,
@@ -35,6 +41,7 @@ function revealMappedOrUniqueText(
   const element = matches[0];
   if (element === undefined) return null;
   element.dataset.docxParagraphOrdinal = String(ordinal);
+  markDocxHeading(element, semantic.headingLevel);
   return element;
 }
 
@@ -108,13 +115,30 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
       }
     }
     signal.throwIfAborted();
+    for (const paragraph of model.paragraphs) {
+      if (paragraph.headingLevel === null) continue;
+      const element = paragraphElements.get(paragraph.ordinal);
+      if (element !== undefined) markDocxHeading(element, paragraph.headingLevel);
+    }
     container.replaceChildren(staging);
-    let stopFitting: (() => void) | undefined;
+    let pageLayout: ReturnType<typeof fitDocxPages>;
     if (this.pageLayout) {
       staging.classList.add("office-viewer-docx--paged");
       const style = container.ownerDocument.createElement("style");
       style.textContent = `
         :host { font: 11pt "Calibri", "Carlito", sans-serif; }
+        .docx p:where([data-docx-heading-level]) {
+          font-size: var(--office-viewer-docx-heading-size);
+          font-weight: 600;
+        }
+        .docx :where([data-docx-heading-level]) span:where(:not([class])) {
+          font-size: inherit;
+          font-weight: inherit;
+        }
+        .office-viewer-docx-table-scroll {
+          max-width: 100%;
+          overflow-x: auto;
+        }
         .is-active-docx-paragraph {
           background: var(--text-highlight-bg, #fff1ae);
           outline: 2px solid var(--interactive-accent, #7761bd);
@@ -126,14 +150,15 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
           padding: 4px 8px;
         }
       `;
-      staging.shadowRoot?.prepend(style);
+      staging.shadowRoot?.append(style);
       prepareRenderedDocxPageSpacing(content);
-      stopFitting = fitDocxPages(container, content);
+      pageLayout = fitDocxPages(container, content);
     }
     return {
       candidate: "docx-preview",
       paragraphElements,
       warnings,
+      zoom: pageLayout?.zoom,
       revealParagraph: (ordinal) =>
         revealMappedOrUniqueText(
           content,
@@ -142,7 +167,7 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
           ordinal,
         ),
       dispose: () => {
-        stopFitting?.();
+        pageLayout?.dispose();
         content.replaceChildren();
         if (staging.parentElement === container) container.replaceChildren();
       },
@@ -150,25 +175,31 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
   }
 }
 
-function fitDocxPages(container: HTMLElement, content: HTMLElement): () => void {
+function fitDocxPages(container: HTMLElement, content: HTMLElement) {
   const wrapper = content.querySelector<HTMLElement>(".docx-wrapper");
-  if (wrapper === null) return () => undefined;
+  if (wrapper === null) return;
   wrapper.style.padding = "12px";
   wrapper.style.background = "transparent";
   wrapper.style.gap = "12px";
-  const pages = [...wrapper.querySelectorAll<HTMLElement>(":scope > section.docx")];
+  // A centered page wider than the viewport needs a reachable left edge.
+  wrapper.style.alignItems = "safe center";
+  const pages = Array.from(wrapper.children).filter(
+    (child): child is HTMLElement => child.matches("section.docx"),
+  );
+  const tablesByPage = new Map<HTMLElement, HTMLTableElement[]>();
   for (const page of pages) {
     if (page.style.width === "") page.style.width = "612pt";
     if (page.style.minHeight === "") page.style.minHeight = "792pt";
-    for (const side of ["top", "right", "bottom", "left"]) {
-      const property = `padding-${side}`;
-      if (page.style.getPropertyValue(property) === "") {
-        page.style.setProperty(property, "72pt");
-      }
-    }
+    compactDocxPreviewMargins(page);
     page.style.margin = "0";
     page.style.boxShadow = "0 1px 4px rgb(0 0 0 / 25%)";
+    const tables = Array.from(page.querySelectorAll("table")).filter(
+      (table) => table.parentElement?.closest("table") == null,
+    );
+    if (tables.length > 0) tablesByPage.set(page, tables);
   }
+  const pageElements = new Set<EventTarget>(pages);
+  let zoom = 1;
   const resize = () => {
     const available = wrapper.clientWidth - 24;
     if (available <= 0) return;
@@ -176,13 +207,40 @@ function fitDocxPages(container: HTMLElement, content: HTMLElement): () => void 
     for (const [index, page] of pages.entries()) {
       const width = widths[index] ?? 0;
       if (width > 0) {
-        page.style.setProperty("zoom", String(Math.min(1, available / width)));
+        page.style.setProperty("zoom", String(Math.min(1, available / width) * zoom));
       }
     }
   };
-  resize();
+  let disposed = false;
+  const fitLayout = () => {
+    if (disposed) return;
+    for (const [page, tables] of tablesByPage) fitWideDocxPageTables(page, tables);
+    resize();
+  };
+  fitLayout();
   const Observer = container.ownerDocument.defaultView?.ResizeObserver;
-  const observer = Observer === undefined ? null : new Observer(resize);
+  const observer = Observer === undefined ? null : new Observer(fitLayout);
   observer?.observe(wrapper);
-  return () => observer?.disconnect();
+  content.addEventListener("load", fitLayout, true);
+  void container.ownerDocument.fonts?.ready.then(fitLayout);
+  const zoomControl = createDocxZoom(
+    container,
+    (x, y, event) => event?.composedPath().find(
+      (target): target is HTMLElement => pageElements.has(target),
+    ) ?? (content.getRootNode() as ShadowRoot).elementFromPoint?.(x, y)
+      ?.closest<HTMLElement>("section.docx") ?? wrapper,
+    (scale) => {
+      zoom = scale;
+      resize();
+    },
+  );
+  return {
+    zoom: zoomControl,
+    dispose: () => {
+      disposed = true;
+      content.removeEventListener("load", fitLayout, true);
+      zoomControl.dispose();
+      observer?.disconnect();
+    },
+  };
 }

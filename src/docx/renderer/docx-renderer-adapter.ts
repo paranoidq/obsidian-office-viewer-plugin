@@ -2,6 +2,7 @@ import type {
   DocxSemanticModel,
   DocxSemanticParagraph,
 } from "../docx-semantic-model";
+import type { DocxZoom } from "./docx-wheel-zoom";
 
 export type DocxRendererCandidate =
   | "docx-preview"
@@ -14,6 +15,7 @@ export interface DocxRendererSession {
   readonly paragraphElements: ReadonlyMap<number, HTMLElement>;
   readonly warnings: readonly string[];
   readonly managesUnavailableContent?: boolean;
+  readonly zoom?: DocxZoom;
   revealParagraph(ordinal: number): HTMLElement | null;
   dispose(): void;
 }
@@ -42,6 +44,17 @@ export function comparableParagraphText(value: string): string {
 }
 
 const PARAGRAPH_SELECTOR = "p, h1, h2, h3, h4, h5, h6, li";
+const HEADING_SIZES = [1.75, 1.5, 1.3, 1.18, 1.1, 1.04, 1, 0.98, 0.96];
+
+export function markDocxHeading(element: HTMLElement, level: number | null): void {
+  if (level === null) return;
+  const size = HEADING_SIZES[level - 1];
+  if (size === undefined) return;
+  element.dataset.docxHeadingLevel = String(level);
+  element.setAttribute("role", "heading");
+  element.setAttribute("aria-level", String(level));
+  element.style.setProperty("--office-viewer-docx-heading-size", `${size}em`);
+}
 
 function leafRenderedParagraphs(container: HTMLElement): HTMLElement[] {
   return Array.from(

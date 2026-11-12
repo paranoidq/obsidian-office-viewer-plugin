@@ -51,6 +51,7 @@ describe("bounded DOCX renderer", () => {
       text: index === 1_000 ? "Read evidence and equation" : `Paragraph ${index + 1}`,
       searchText: index === 1_000 ? "read evidence and equation" : `paragraph ${index + 1}`,
       styleId: null,
+      headingLevel: null,
       listItem: false,
       tableDepth: 0,
       bookmarks: [],

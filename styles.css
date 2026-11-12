@@ -90,10 +90,20 @@
 }
 
 .office-file-embed[data-format="docx"] .office-file-embed__body {
+  flex: 1 1 auto;
   max-height: 75vh;
+  min-width: 0;
   overflow: auto;
   scrollbar-gutter: stable;
   font: 11pt "Calibri", "Carlito", sans-serif;
+}
+
+.office-file-embed[data-format="docx"] {
+  container: office-docx-embed / inline-size;
+}
+
+.office-file-embed__docx-layout {
+  display: flex;
 }
 
 .office-file-embed[data-format="docx"] .office-viewer-docx--bounded-semantic {
@@ -899,6 +909,28 @@
   color: var(--text-on-accent);
 }
 
+.office-viewer-docx-zoom {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: var(--size-4-1);
+}
+
+.office-viewer-docx-zoom .office-viewer-icon-button {
+  background: transparent;
+  box-shadow: none;
+}
+
+.office-viewer-docx-zoom .office-viewer-icon-button:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+
+.office-viewer-docx-zoom__ratio {
+  font-variant-numeric: tabular-nums;
+  min-width: 4em;
+  padding-inline: var(--size-4-2);
+}
+
 .office-viewer-error {
   align-items: center;
   align-self: center;
@@ -1013,6 +1045,73 @@
 
 .office-viewer-docx-main > .office-viewer-error {
   flex: 1 1 auto;
+}
+
+.office-viewer-docx-outline {
+  background: var(--background-secondary);
+  border-inline-end: 1px solid var(--background-modifier-border);
+  flex: 0 0 min(32%, 15rem);
+  font: var(--font-ui-small) var(--font-interface);
+  min-width: 0;
+  overflow: auto;
+  padding: var(--size-4-2);
+}
+
+.office-file-embed__docx-layout .office-viewer-docx-outline {
+  max-height: 75vh;
+}
+
+@container office-docx-embed (max-width: 440px) {
+  .office-file-embed__docx-layout {
+    flex-direction: column;
+  }
+
+  .office-file-embed__docx-layout .office-viewer-docx-outline {
+    border-block-end: 1px solid var(--background-modifier-border);
+    border-inline-end: 0;
+    flex: 0 0 auto;
+    max-height: 11rem;
+  }
+}
+
+.office-viewer-docx-outline__title {
+  font-weight: var(--font-semibold);
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.office-viewer-docx-outline .office-viewer-docx-outline__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.office-viewer-docx-outline__entry {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  display: block;
+  height: auto;
+  min-height: 26px;
+  overflow-wrap: anywhere;
+  padding-block: var(--size-4-1);
+  padding-inline: min(calc(var(--size-4-2) + var(--office-viewer-docx-outline-indent)), 40%) var(--size-4-1);
+  text-align: start;
+  white-space: normal;
+  width: 100%;
+}
+
+.office-viewer-docx-outline__entry:hover,
+.office-viewer-docx-outline__entry[aria-current="location"] {
+  background: var(--background-modifier-hover);
+}
+
+.office-viewer-docx-outline__entry[aria-current="location"] {
+  color: var(--text-accent);
+}
+
+.office-viewer-docx-outline__notice:not(:empty) {
+  color: var(--text-muted);
+  padding: var(--size-4-2);
 }
 
 .office-viewer-docx-search-rail {
@@ -1248,6 +1347,12 @@
 
 .office-viewer-docx--bounded-semantic {
   min-height: 100%;
+}
+
+.office-viewer-docx--bounded-semantic [data-docx-heading-level] {
+  font-size: var(--office-viewer-docx-heading-size);
+  font-weight: 600;
+  margin-block: 0.8em 0.35em;
 }
 
 .office-viewer-docx-bounded-spacer {
