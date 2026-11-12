@@ -7,6 +7,10 @@ import {
 const ENGLISH_DOCX_MESSAGES = {
   fallbackTitle: "DOCX reader",
   loading: "Loading document…",
+  attachmentName: "Attachment {number}",
+  attachmentOpen: "Open {name} in the default application",
+  attachmentUnsupported: "This object does not contain a supported document.",
+  attachmentOpenFailed: "Unable to open the attachment in the default application.",
   outline: "Document outline",
   outlineOpen: "Show document outline",
   outlineClose: "Hide document outline",
@@ -63,6 +67,10 @@ type DocxMessageCatalog = Readonly<Record<DocxMessageKey, string>>;
 const SIMPLIFIED_CHINESE_DOCX_MESSAGES = {
   fallbackTitle: "DOCX 阅读器",
   loading: "正在加载文档…",
+  attachmentName: "附件 {number}",
+  attachmentOpen: "点击用默认应用打开 {name}",
+  attachmentUnsupported: "此对象没有可打开的受支持文档。",
+  attachmentOpenFailed: "无法用默认应用打开附件。",
   outline: "文档目录",
   outlineOpen: "显示文档目录",
   outlineClose: "隐藏文档目录",
@@ -113,6 +121,10 @@ const SIMPLIFIED_CHINESE_DOCX_MESSAGES = {
 const TRADITIONAL_CHINESE_DOCX_MESSAGES = {
   fallbackTitle: "DOCX 閱讀器",
   loading: "正在載入文件…",
+  attachmentName: "附件 {number}",
+  attachmentOpen: "點擊以預設應用程式開啟 {name}",
+  attachmentUnsupported: "此物件沒有可開啟的受支援文件。",
+  attachmentOpenFailed: "無法以預設應用程式開啟附件。",
   outline: "文件目錄",
   outlineOpen: "顯示文件目錄",
   outlineClose: "隱藏文件目錄",

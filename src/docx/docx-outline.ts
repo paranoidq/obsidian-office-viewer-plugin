@@ -2,6 +2,17 @@ import { decorateOfficeViewerIconButton } from "../office-viewer-chrome";
 import type { DocxMessageTranslator } from "./docx-messages";
 import type { DocxSemanticModel } from "./docx-semantic-model";
 
+function numberedOutlineTitle(text: string, headingNumber?: string): string {
+  const title = text.replace(/\s+/g, " ").trim();
+  const number = headingNumber?.trim();
+  if (!number) return title;
+  const punctuation = /[、：．]$/u.test(number);
+  const alreadyNumbered = title.startsWith(number) &&
+    (title.length === number.length || punctuation || /^\s/.test(title.slice(number.length)));
+  if (alreadyNumbered) return title;
+  return punctuation ? `${number}${title}` : `${number} ${title}`;
+}
+
 export function createDocxOutline(
   document: Document,
   messages: DocxMessageTranslator,
@@ -41,9 +52,19 @@ export function createDocxOutline(
     if (populated || model === undefined) return;
     populated = true;
     const entries = document.createDocumentFragment();
+    const ancestors: Array<{
+      level: number;
+      item: HTMLLIElement;
+      children?: HTMLUListElement;
+    }> = [];
     for (const paragraph of model.paragraphs) {
       const level = paragraph.headingLevel;
       if (level === null || paragraph.tableDepth > 0) continue;
+      let parent = ancestors.at(-1);
+      while (parent !== undefined && parent.level >= level) {
+        ancestors.pop();
+        parent = ancestors.at(-1);
+      }
       const item = document.createElement("li");
       const entry = document.createElement("button");
       entry.type = "button";
@@ -51,8 +72,7 @@ export function createDocxOutline(
       entry.dataset.action = "docx-outline-entry";
       entry.dataset.docxHeadingLevel = String(level);
       entry.dataset.paragraphOrdinal = String(paragraph.ordinal);
-      entry.style.setProperty("--office-viewer-docx-outline-indent", `${(level - 1) * 8}px`);
-      const title = paragraph.text.replace(/\s+/g, " ").trim();
+      const title = numberedOutlineTitle(paragraph.text, paragraph.headingNumber);
       entry.textContent = title;
       entry.setAttribute("aria-label", messages.text("outlineEntry", { level, title }));
       entry.addEventListener("click", (event) => {
@@ -67,7 +87,17 @@ export function createDocxOutline(
         entry.setAttribute("aria-current", "location");
       });
       item.append(entry);
-      entries.append(item);
+      if (parent === undefined) {
+        entries.append(item);
+      } else {
+        if (parent.children === undefined) {
+          parent.children = document.createElement("ul");
+          parent.children.className = "office-viewer-docx-outline__branch";
+          parent.item.append(parent.children);
+        }
+        parent.children.append(item);
+      }
+      ancestors.push({ level, item });
     }
     notice.textContent = entries.childElementCount === 0 ? messages.text("outlineEmpty") : "";
     list.append(entries);

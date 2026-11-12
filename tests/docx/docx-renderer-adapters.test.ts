@@ -1,6 +1,8 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { inspectDocxPackage } from "../../src/docx/docx-semantic-model";
+import { DocxRenderSource } from "../../src/docx/docx-render-source";
+import { createDocxRendererAdapter } from "../../src/docx/renderer/create-docx-renderer-adapter";
 import {
   mapRenderedParagraphs,
   prepareRenderedDocxReadingLayout,
@@ -57,6 +59,53 @@ async function rendererFixture(): Promise<ArrayBuffer> {
   );
   return zip.generateAsync({ type: "arraybuffer" });
 }
+
+it("preserves Word blank lines and inherited character indents in both preview modes", async () => {
+  const zip = await JSZip.loadAsync(await rendererFixture());
+  zip.file("word/document.xml", `<w:document xmlns:w="${W}"><w:body>
+    <w:p><w:pPr><w:pStyle w:val="Body"/></w:pPr><w:r><w:t>First</w:t></w:r></w:p>
+    <w:p><w:pPr><w:rPr><w:sz w:val="36"/></w:rPr></w:pPr><w:r><w:cr/></w:r></w:p>
+    <w:p/>
+    <w:p><w:pPr><w:ind w:left="480" w:hangingChars="100"/></w:pPr><w:r><w:t>Last</w:t></w:r></w:p>
+  </w:body></w:document>`);
+  zip.file("word/_rels/document.xml.rels", `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  </Relationships>`);
+  zip.file("word/styles.xml", `<w:styles xmlns:w="${W}">
+    <w:style w:type="paragraph" w:styleId="Base">
+      <w:pPr><w:ind w:firstLineChars="200"/></w:pPr><w:rPr><w:sz w:val="24"/></w:rPr>
+    </w:style>
+    <w:style w:type="paragraph" w:styleId="Body"><w:basedOn w:val="Base"/></w:style>
+  </w:styles>`);
+  const signal = new AbortController().signal;
+  const bytes = await zip.generateAsync({ type: "arraybuffer" });
+  const model = await inspectDocxPackage(bytes, signal);
+  expect(model.paragraphs.map((p) => p.text)).toEqual(["First", "Last"]);
+  const source = new DocxRenderSource(bytes, model);
+  const renderer = createDocxRendererAdapter({ pageLayout: true });
+  const container = document.createElement("div");
+  const full = await source.open(renderer, container, "full", signal);
+  const paragraphs = container.firstElementChild?.shadowRoot?.querySelectorAll("article p");
+  expect(paragraphs).toHaveLength(4);
+  expect(paragraphs?.[1]?.querySelector("br")).not.toBeNull();
+  expect(paragraphs?.[1]?.querySelector<HTMLElement>("span[style]")?.style.fontSize).toBe("18pt");
+  expect(paragraphs?.[2]?.textContent).toBe("\u00a0");
+  expect(full.revealParagraph(1)?.style.textIndent).toBe("24pt");
+  expect(full.revealParagraph(2)?.style.textIndent).toBe("-11pt");
+  expect(full.revealParagraph(2)?.style.marginInlineStart).toBe("24pt");
+  full.dispose();
+
+  const simplified = await source.open(renderer, container, "simplified", signal);
+  const first = simplified.revealParagraph(1);
+  const last = simplified.revealParagraph(2);
+  expect(first?.style.textIndent).toBe("24pt");
+  expect(last?.style.textIndent).toBe("-11pt");
+  const blank = first?.nextElementSibling as HTMLElement;
+  expect(blank.getAttribute("aria-hidden")).toBe("true");
+  expect(parseFloat(blank.style.height)).toBeCloseTo((2 * 18 + 11) * 1.2 * 4 / 3);
+  expect(blank.nextElementSibling).toBe(last);
+  simplified.dispose();
+});
 
 describe("DOCX renderer mapping and sanitization", () => {
   it("maps only exact semantic paragraph text in document order", () => {

@@ -14,6 +14,9 @@ stores only a Vault-relative path, file size, modification time, zero-based
 slide index, and update timestamp in the plugin data store. It can be disabled
 and cleared from settings.
 
+Opening a DOCX attachment in its default application writes a temporary copy
+outside the Vault. The plugin removes these copies on unload.
+
 DOCX preview may rasterize Windows metafiles and chart cached series into local
 PNG images for display. That conversion stays in-process, uses only package
 bytes already present in the open document, and does not fetch external chart

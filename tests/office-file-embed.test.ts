@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
+import CFB from "cfb";
 import type { MarkdownRenderChild } from "obsidian";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDocxMessageTranslator } from "../src/docx/docx-messages";
+import type { DocxAttachmentFile } from "../src/docx/docx-attachments";
 import { createDocxRendererAdapter } from "../src/docx/renderer/create-docx-renderer-adapter";
 import { ENGLISH_MESSAGE_TRANSLATOR } from "../src/i18n";
 import {
@@ -96,7 +98,9 @@ it("compacts DOCX margins while preserving page width, breaks, tables, and spaci
   const part = "word/document.xml";
   const xml = await zip.file(part)!.async("string");
   zip.file(part, xml.replace("<w:sectPr/>", `
+    <w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>First section</w:t></w:r></w:p>
     <w:p><w:r><w:br w:type="page"/></w:r></w:p>
+    <w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Subsection</w:t></w:r></w:p>
     <w:p><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:r><w:t>Second page content</w:t></w:r></w:p>
     <w:tbl>
       <w:tblPr>
@@ -117,6 +121,7 @@ it("compacts DOCX margins while preserving page width, breaks, tables, and spaci
             <w:r><w:t>Exact spacing</w:t></w:r></w:p></w:tc>
       </w:tr>
     </w:tbl>
+    <w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Next section</w:t></w:r></w:p>
     <w:sectPr>
       <w:pgSz w:w="11906" w:h="16838"/>
       <w:pgMar w:left="1080" w:right="1080" w:top="240" w:bottom="1440"/>
@@ -140,7 +145,14 @@ it("compacts DOCX margins while preserving page width, breaks, tables, and spaci
     const heading = pages?.[1]?.querySelector<HTMLElement>('[role="heading"][aria-level="3"]')!;
     expect(heading.textContent).toBe("Second page content");
     embed.querySelector<HTMLButtonElement>('[data-action="toggle-docx-outline"]')!.click();
-    const outlineEntry = embed.querySelector<HTMLButtonElement>('[data-action="docx-outline-entry"]')!;
+    const list = embed.querySelector(".office-viewer-docx-outline__list")!;
+    const roots = Array.from(list.children);
+    expect(roots.map((root) => root.firstElementChild?.textContent))
+      .toEqual(["First section", "Next section"]);
+    const subsection = roots[0]?.lastElementChild?.firstElementChild;
+    expect(subsection?.firstElementChild?.textContent).toBe("Subsection");
+    const outlineEntry = subsection?.lastElementChild?.firstElementChild
+      ?.firstElementChild as HTMLButtonElement;
     expect(outlineEntry.textContent).toBe("Second page content");
     expect(outlineEntry.dataset.docxHeadingLevel).toBe("3");
     outlineEntry.click();
@@ -185,6 +197,160 @@ it("leaves fragment references to their existing embed handlers", () => {
   try {
     expect(f.root.querySelector(".office-file-embed")).toBeNull();
     expect(f.options.resolveFile).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("opens DOCX attachments only on activation and keeps unsupported objects inert", async () => {
+  const nestedDocx = await readFile("tests/vault/docx-exploration/read-search-only.docx");
+  const source = await JSZip.loadAsync(nestedDocx);
+  const part = "word/document.xml";
+  const xml = await source.file(part)!.async("string");
+  const object = (id: string) => `<w:p><w:r><w:object><o:OLEObject
+    xmlns:o="urn:schemas-microsoft-com:office:office"
+    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    Type="Embed" r:id="${id}"/></w:object></w:r></w:p>`;
+  source.file(part, xml.replace("<w:sectPr/>", `${object("pdf")}${object("word")}${object("unknown")}<w:sectPr/>`));
+  const relPath = "word/_rels/document.xml.rels";
+  const rels = await source.file(relPath)!.async("string");
+  const rel = (id: string, type: string, target: string) =>
+    `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="embeddings/${target}"/>`;
+  source.file(relPath, rels.replace("</Relationships>", [
+    rel("pdf", "oleObject", "oleObject1.bin"),
+    rel("word", "package", "report.docx"),
+    rel("unknown", "oleObject", "oleObject2.bin"),
+    "</Relationships>",
+  ].join("")));
+  const pdf = new TextEncoder().encode("%PDF-1.4\n%%EOF\n");
+  const packager = CFB.utils.cfb_new();
+  const metadata = new TextEncoder().encode("attachment.pdf\0C:\\attachment.pdf\0");
+  const record = new Uint8Array(6 + metadata.length + 12 + pdf.length);
+  const data = new DataView(record.buffer);
+  data.setUint32(0, record.length - 4, true);
+  data.setUint16(4, 2, true);
+  record.set(metadata, 6);
+  data.setUint32(6 + metadata.length + 8, pdf.length, true);
+  record.set(pdf, record.length - pdf.length);
+  CFB.utils.cfb_add(packager, "\x01Ole10Native", record);
+  source.file("word/embeddings/oleObject1.bin", CFB.write(packager, { type: "buffer" }));
+  source.file("word/embeddings/report.docx", nestedDocx);
+  source.file("word/embeddings/oleObject2.bin", "Unsupported attachment");
+  const buffer = await source.generateAsync({ type: "arraybuffer" });
+  const openAttachment = vi.fn(async (_file: DocxAttachmentFile) => undefined);
+  const f = fixture("with-attachments.docx", { readBinary: async () => buffer, openAttachment });
+  const click = (element: Element, detail = 1) =>
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true, detail }));
+  try {
+    const embed = f.root.querySelector<HTMLElement>(".office-file-embed")!;
+    await vi.waitFor(() => expect(embed.dataset.state).toBe("ready"));
+    const page = embed.querySelector(".office-viewer-docx--paged")?.shadowRoot;
+    const buttons = page!.querySelectorAll<HTMLButtonElement>("[data-docx-attachment]");
+    expect(buttons).toHaveLength(3);
+    expect(openAttachment).not.toHaveBeenCalled();
+    click(buttons[0]!);
+    await vi.waitFor(() => expect(openAttachment).toHaveBeenCalledTimes(1));
+    click(buttons[0]!, 2);
+    expect(openAttachment.mock.lastCall?.[0]).toMatchObject({ name: "attachment.pdf", extension: "pdf" });
+    expect(Array.from(openAttachment.mock.lastCall![0].bytes)).toEqual(Array.from(pdf));
+    click(buttons[2]!);
+    await vi.waitFor(() => expect(embed.textContent).toContain("does not contain a supported document"));
+    expect(openAttachment).toHaveBeenCalledTimes(1);
+
+    embed.querySelector<HTMLButtonElement>('[data-action="toggle-docx-mode"]')!.click();
+    await vi.waitFor(() => expect(embed.dataset.renderer).toBe("bounded-semantic"));
+    const simplified = embed.querySelectorAll<HTMLButtonElement>("[data-docx-attachment]");
+    expect(simplified).toHaveLength(3);
+    simplified[1]!.click();
+    await vi.waitFor(() => expect(openAttachment).toHaveBeenCalledTimes(2));
+    expect(openAttachment.mock.lastCall?.[0]).toMatchObject({ name: "report.docx", extension: "docx" });
+    expect(Array.from(openAttachment.mock.lastCall![0].bytes)).toEqual(Array.from(nestedDocx));
+  } finally {
+    f.dispose();
+  }
+});
+
+it("lays out the body table of contents and jumps to the matching heading inside the embed", async () => {
+  const source = await JSZip.loadAsync(await readFile("tests/vault/docx-exploration/read-search-only.docx"));
+  const part = "word/document.xml";
+  const xml = await source.file(part)!.async("string");
+  const toc = (level: number, title: string, page: string, anchor: string, leader: string) =>
+    `<w:p><w:pPr><w:pStyle w:val="TOC${level}"/><w:tabs><w:tab w:val="right" w:leader="${leader}" w:pos="9000"/></w:tabs></w:pPr>
+      <w:hyperlink w:anchor="${anchor}"><w:r><w:t>${title}</w:t></w:r><w:r><w:tab/><w:t>${page}</w:t></w:r></w:hyperlink></w:p>`;
+  const heading = (level: number, title: string, anchor: string) =>
+    `<w:p><w:pPr><w:pStyle w:val="Heading${level}"/><w:numPr><w:ilvl w:val="${level - 1}"/><w:numId w:val="25"/></w:numPr></w:pPr>
+      <w:bookmarkStart w:id="${level}" w:name="${anchor}"/><w:r><w:t>${title}</w:t></w:r><w:bookmarkEnd w:id="${level}"/></w:p>`;
+  source.file(part, xml.replace("<w:sectPr/>", [
+    toc(1, "Overview", "4", "_Toc100", "dot"),
+    toc(2, "3.1 Scope", "9", "_Toc101", "none"),
+    heading(1, "Overview", "_Toc100"),
+    heading(2, "Scope", "_Toc101"),
+    "<w:sectPr/>",
+  ].join("")));
+  source.file("word/numbering.xml", `<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:abstractNum w:abstractNumId="25">
+      <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1"/></w:lvl>
+      <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2"/></w:lvl>
+    </w:abstractNum><w:num w:numId="25"><w:abstractNumId w:val="25"/>
+      <w:lvlOverride w:ilvl="0"><w:startOverride w:val="3"/></w:lvlOverride></w:num>
+  </w:numbering>`);
+  const buffer = await source.generateAsync({ type: "arraybuffer" });
+  const f = fixture("with-toc.docx", { readBinary: async () => buffer });
+  try {
+    const embed = f.root.querySelector<HTMLElement>(".office-file-embed")!;
+    await vi.waitFor(() => expect(embed.dataset.state).toBe("ready"));
+    const body = embed.querySelector<HTMLElement>(".office-file-embed__body")!;
+    const preview = body.querySelector(".office-viewer-docx--paged")!.shadowRoot!;
+    const rows = Array.from(preview.querySelectorAll<HTMLElement>("[data-docx-toc-level]"));
+    expect(rows.map((row) => [
+      row.dataset.docxTocLevel,
+      row.querySelector(".office-viewer-docx-toc-title")?.textContent,
+      row.querySelector<HTMLElement>(".office-viewer-docx-toc-leader")?.dataset.leader,
+      row.querySelector(".office-viewer-docx-toc-page")?.textContent,
+    ])).toEqual([
+      ["1", "3 Overview", "dot", "4"],
+      ["2", "3.1 Scope", "none", "9"],
+    ]);
+    const scope = preview.querySelector<HTMLElement>('[data-docx-heading-level="2"]')!;
+    vi.spyOn(scope, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 240, 100, 20));
+    rows[1]!.querySelector<HTMLAnchorElement>("a[data-docx-toc-target]")!.click();
+    expect(body.scrollTop).toBe(232);
+    expect(f.options.openExternalUrl).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("keeps complete numbered headings in the sidebar even without a body table of contents", async () => {
+  const source = await JSZip.loadAsync(await readFile("tests/vault/docx-exploration/read-search-only.docx"));
+  const part = "word/document.xml";
+  const xml = await source.file(part)!.async("string");
+  const heading = (level: number, title: string) =>
+    `<w:p><w:pPr><w:pStyle w:val="Heading${level}"/><w:numPr><w:numId w:val="25"/></w:numPr></w:pPr>
+      <w:r><w:t>${title}</w:t></w:r></w:p>`;
+  source.file(part, xml.replace("<w:sectPr/>", [
+    heading(1, "主要需求"),
+    heading(2, "身份验证"),
+    heading(2, "1.2 已编号的标题"),
+    "<w:sectPr/>",
+  ].join("")));
+  source.file("word/numbering.xml", `<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:abstractNum w:abstractNumId="25">
+      <w:lvl w:ilvl="0"><w:pStyle w:val="Heading1"/><w:numFmt w:val="chineseCounting"/><w:lvlText w:val="%1、"/></w:lvl>
+      <w:lvl w:ilvl="1"><w:pStyle w:val="Heading2"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2"/><w:isLgl/></w:lvl>
+    </w:abstractNum><w:num w:numId="25"><w:abstractNumId w:val="25"/></w:num>
+  </w:numbering>`);
+  const buffer = await source.generateAsync({ type: "arraybuffer" });
+  const f = fixture("numbered-headings.docx", { readBinary: async () => buffer });
+  try {
+    const embed = f.root.querySelector<HTMLElement>(".office-file-embed")!;
+    await vi.waitFor(() => expect(embed.dataset.state).toBe("ready"));
+    embed.querySelector<HTMLButtonElement>('[data-action="toggle-docx-outline"]')!.click();
+    const headings = Array.from(embed.querySelectorAll('[data-action="docx-outline-entry"]'));
+    expect(headings.map((entry) => entry.textContent)).toEqual([
+      "一、主要需求", "1.1 身份验证", "1.2 已编号的标题",
+    ]);
+    expect(headings[1]?.getAttribute("aria-label")).toContain("1.1 身份验证");
   } finally {
     f.dispose();
   }

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DocxOpenError } from "./docx/docx-open-error";
+import { restoreLegacyDocAttachments } from "./docx/legacy-doc-attachments";
 import { PptxOpenError } from "./pptx-open-error";
 
 export type LegacyOfficeExtension = "ppt" | "doc";
@@ -86,7 +87,15 @@ export function createLegacyOfficePreview(executable: string, vaultPath: string)
         throw new OpenError("resource-exhausted", "Converted Office file exceeds the preview limit");
       }
       const bytes = await readFile(output, { signal });
-      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const converted = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      if (extension !== "doc") return converted;
+      try {
+        const restored = await restoreLegacyDocAttachments(source, converted, signal);
+        return restored.byteLength <= MAX_OUTPUT_BYTES ? restored : converted;
+      } catch {
+        signal.throwIfAborted();
+        return converted;
+      }
     } catch (error) {
       signal.throwIfAborted();
       if (error instanceof PptxOpenError || error instanceof DocxOpenError) throw error;

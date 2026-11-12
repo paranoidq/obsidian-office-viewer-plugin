@@ -3,6 +3,13 @@ import JSZip, { type JSZipObject } from "jszip";
 import { convertWindowsMetafileToPng } from "./convert-windows-metafile";
 import { DocxOpenError } from "./docx-open-error";
 import {
+  canRenderDocxBlankLine,
+  createDocxParagraphLayoutResolver,
+  type DocxParagraphIndents,
+} from "./docx-paragraph-layout";
+import { createDocxNumbering } from "./docx-numbering";
+import { docxAttachmentExtension, docxAttachmentPart, type DocxAttachment } from "./docx-attachments";
+import {
   createDocxHeadingResolver,
   orderDocxStylesForPreview,
   wordChild,
@@ -22,6 +29,10 @@ const IMAGE_RELATIONSHIP =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const ALT_CHUNK_RELATIONSHIP =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk";
+const ATTACHMENT_RELATIONSHIPS = new Set([
+  `${OFFICE_RELATIONSHIP_NAMESPACE}/package`,
+  `${OFFICE_RELATIONSHIP_NAMESPACE}/oleObject`,
+]);
 const OLE_SIGNATURE = [
   0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
 ] as const;
@@ -84,6 +95,8 @@ export interface DocxSemanticParagraph {
   readonly searchText: string;
   readonly styleId: string | null;
   readonly headingLevel: number | null;
+  readonly headingNumber?: string;
+  readonly indents?: DocxParagraphIndents;
   readonly listItem: boolean;
   readonly tableDepth: number;
   readonly bookmarks: readonly string[];
@@ -107,6 +120,19 @@ export interface DocxSemanticModel {
   readonly bookmarkTargets: readonly DocxBookmarkTarget[];
   readonly unavailableBodyBlocks: readonly DocxUnavailableBodyBlock[];
   readonly hasUnavailableBodyContent: boolean;
+  readonly attachments?: readonly DocxAttachment[];
+  readonly tocEntries?: readonly DocxTocEntry[];
+  readonly blankLineHeights?: readonly { afterParagraphOrdinal: number; twips: number }[];
+}
+
+export interface DocxTocEntry {
+  readonly paragraphOrdinal: number;
+  readonly level: number;
+  readonly page: string;
+  readonly number: string | null;
+  readonly targetOrdinal: number | null;
+  readonly bookmark: string | null;
+  readonly leader: "dot" | "dash" | "solid" | "none";
 }
 
 interface Relationship {
@@ -243,14 +269,15 @@ function relationshipMap(document: Document): ReadonlyMap<string, Relationship> 
   return relationships;
 }
 
-function docxStylesPart(
+function docxRelatedPart(
   zip: JSZip,
   relationships: ReadonlyMap<string, Relationship>,
+  kind: "styles" | "numbering",
 ): JSZipObject | null {
   const relationship = Array.from(relationships.values()).find(
-    ({ type }) => type === `${OFFICE_RELATIONSHIP_NAMESPACE}/styles`,
+    ({ type }) => type === `${OFFICE_RELATIONSHIP_NAMESPACE}/${kind}`,
   );
-  if (relationship === undefined) return zip.file("word/styles.xml");
+  if (relationship === undefined) return zip.file(`word/${kind}.xml`);
   if (relationship.external) return null;
   try {
     const base = "https://docx.invalid/word/document.xml";
@@ -466,16 +493,65 @@ function paragraphBookmarks(paragraph: Element): readonly string[] {
       continue;
     }
     const name = element.getAttributeNS(WORDPROCESSING_NAMESPACE, "name");
-    if (name !== null && name.length > 0 && !name.startsWith("_")) {
+    if (name !== null && name.length > 0 &&
+      (!name.startsWith("_") || /^(?:_Toc|__RefHeading___Toc)/i.test(name))) {
       bookmarks.add(name);
     }
   }
   return [...bookmarks];
 }
 
+function docxTocStyles(styles: Document | null) {
+  const byId = new Map(Array.from(styles?.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "style") ?? [],
+    (style) => [style.getAttributeNS(WORDPROCESSING_NAMESPACE, "styleId"), style] as const));
+  const cache = new Map<string, number | null>();
+  const levelFor = (styleId: string | null): number | null => {
+    const visited = new Set<string>();
+    let level: number | null = null;
+    while (styleId !== null && !visited.has(styleId)) {
+      const cached = cache.get(styleId);
+      if (cached !== undefined) { level = cached; break; }
+      visited.add(styleId);
+      const style = byId.get(styleId) ?? null;
+      const pattern = /^(?:toc|contents|目录|目錄)[\s_-]*([1-9])$/i;
+      const match = pattern.exec(styleId) ?? pattern.exec(wordValue(style, "name") ?? "");
+      if (match !== null) { level = Number(match[1]); break; }
+      styleId = wordValue(style, "basedOn");
+    }
+    for (const id of visited) cache.set(id, level);
+    return level;
+  };
+  const leaderFrom = (properties: Element | null): DocxTocEntry["leader"] | null => {
+    const tabs = Array.from(wordChild(properties, "tabs")?.children ?? []);
+    const right = tabs.reverse().find((tab) => tab.localName === "tab" &&
+      ["right", "end"].includes(tab.getAttributeNS(WORDPROCESSING_NAMESPACE, "val") ?? ""));
+    if (right === undefined) return null;
+    const value = right.getAttributeNS(WORDPROCESSING_NAMESPACE, "leader");
+    if (value === "dot" || value === "middleDot") return "dot";
+    if (value === "hyphen") return "dash";
+    if (value === "underscore" || value === "heavy") return "solid";
+    return "none";
+  };
+  return {
+    levelFor,
+    leaderFor(properties: Element | null, styleId: string | null): DocxTocEntry["leader"] {
+      let leader = leaderFrom(properties);
+      const visited = new Set<string>();
+      while (leader === null && styleId !== null && !visited.has(styleId)) {
+        visited.add(styleId);
+        const style = byId.get(styleId) ?? null;
+        leader = leaderFrom(wordChild(style, "pPr"));
+        styleId = wordValue(style, "basedOn");
+      }
+      return leader ?? "dot";
+    },
+  };
+}
+
 function unavailableContent(
   paragraph: Element,
   relationships: ReadonlyMap<string, Relationship>,
+  attachments: ReadonlySet<Element>,
 ): readonly DocxUnavailableContentKind[] {
   const kinds = new Set<DocxUnavailableContentKind>();
   if (
@@ -485,14 +561,13 @@ function unavailableContent(
     kinds.add("equation");
   }
   if (
-    paragraph.getElementsByTagNameNS(
-      WORDPROCESSING_NAMESPACE,
-      "object",
-    ).length > 0 ||
-    paragraph.getElementsByTagNameNS(
-      WORDPROCESSING_NAMESPACE,
-      "pict",
-    ).length > 0
+    Array.from(paragraph.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "object"))
+      .some((object) => !attachments.has(object)) ||
+    Array.from(paragraph.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "pict"))
+      .some((picture) => {
+        const object = nearestAncestor(picture, WORDPROCESSING_NAMESPACE, "object");
+        return object === null || !attachments.has(object);
+      })
   ) {
     kinds.add("embedded-object");
   }
@@ -522,6 +597,48 @@ function unavailableContent(
     }
   }
   return [...kinds];
+}
+
+function attachmentPart(
+  object: Element,
+  relationships: ReadonlyMap<string, Relationship>,
+  zip: JSZip,
+) {
+  const ole = object.getElementsByTagNameNS("urn:schemas-microsoft-com:office:office", "OLEObject")[0];
+  const id = ole?.getAttributeNS(OFFICE_RELATIONSHIP_NAMESPACE, "id");
+  if (!id || ole?.getAttribute("Type")?.toLowerCase() === "link" || runIsHidden(object)) return;
+  const relationship = relationships.get(id);
+  if (relationship === undefined || relationship.external ||
+    !ATTACHMENT_RELATIONSHIPS.has(relationship.type)) return;
+  try {
+    const url = new URL(relationship.target, "https://docx.invalid/word/document.xml");
+    if (url.origin !== "https://docx.invalid" || url.search || url.hash) return;
+    const partPath = decodeURIComponent(url.pathname.slice(1));
+    if (!/^word\/embeddings\/(?!\.{1,2}(?:\/|$))[^/\\\x00]+$/i.test(partPath) ||
+      docxAttachmentPart(zip, partPath) === null) return;
+    const name = partPath.split("/").at(-1)!;
+    const extension = docxAttachmentExtension(name);
+    if (extension !== null) return { partPath, name, extension };
+    if (!/\.bin$/i.test(name)) return;
+    const program = ole?.getAttribute("ProgID") ?? "";
+    const hint = /^AcroExch\.Document/i.test(program) ? "pdf"
+      : /^Word\.Document\.12$/i.test(program) ? "docx"
+      : /^Word\.Document\.8$/i.test(program) ? "doc"
+      : /^Excel\.Sheet\.12$/i.test(program) ? "xlsx"
+      : /^Excel\.Sheet\.8$/i.test(program) ? "xls"
+      : /^PowerPoint\.Show\.12$/i.test(program) ? "pptx"
+      : /^PowerPoint\.Show\.8$/i.test(program) ? "ppt"
+      : null;
+    const previewName = object.getAttribute("officeViewerAttachmentName");
+    return {
+      partPath,
+      name: previewName && hint !== null && docxAttachmentExtension(previewName) === hint
+        ? previewName : null,
+      extension: hint,
+    } as const;
+  } catch {
+    return;
+  }
 }
 
 function inlineImageCount(
@@ -629,7 +746,8 @@ function verifyExternalRelationships(
     }
     if (
       relationship.type === IMAGE_RELATIONSHIP ||
-      relationship.type === ALT_CHUNK_RELATIONSHIP
+      relationship.type === ALT_CHUNK_RELATIONSHIP ||
+      ATTACHMENT_RELATIONSHIPS.has(relationship.type)
     ) {
       continue;
     }
@@ -688,19 +806,36 @@ export async function inspectDocxPackage(
       : relationshipMap(await readXml(relationshipsPart, signal));
   rejectActiveContent(zip, contentTypes);
   verifyExternalRelationships(relationships, document);
-  const stylesPart = docxStylesPart(zip, relationships);
-  const headings = createDocxHeadingResolver(
-    stylesPart === null ? null : await readXml(stylesPart, signal),
-  );
+  const stylesPart = docxRelatedPart(zip, relationships, "styles");
+  const styles = stylesPart === null ? null : await readXml(stylesPart, signal);
+  const headings = createDocxHeadingResolver(styles);
+  const paragraphLayout = createDocxParagraphLayoutResolver(styles);
 
   const body = document.getElementsByTagNameNS(
     WORDPROCESSING_NAMESPACE,
     "body",
   )[0];
   if (body === undefined) throw malformed("DOCX main document has no body");
+  const tocStyles = docxTocStyles(styles);
+  const hasToc = Array.from(body.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "pStyle"))
+    .some((style) => tocStyles.levelFor(style.getAttributeNS(WORDPROCESSING_NAMESPACE, "val")) !== null);
+  const numberingPart = docxRelatedPart(zip, relationships, "numbering");
+  const listNumber = numberingPart === null ? null
+    : createDocxNumbering(await readXml(numberingPart, signal), styles);
 
   const paragraphs: DocxSemanticParagraph[] = [];
+  const tocRows: Array<Pick<DocxTocEntry, "level" | "page" | "bookmark" | "leader"> & {
+    ordinal: number;
+    title: string;
+  }> = [];
   const unavailableBodyBlocks: DocxUnavailableBodyBlock[] = [];
+  const blankLineHeights = new Map<number, number>();
+  const attachments: DocxAttachment[] = [];
+  const objectIndexes = new Map(Array.from(
+    document.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "object"),
+    (object, index) => [object, index] as const,
+  ));
+  let markerPrefix: string | undefined;
   for (const paragraph of body.getElementsByTagNameNS(
     WORDPROCESSING_NAMESPACE,
     "p",
@@ -712,29 +847,70 @@ export async function inspectDocxPackage(
       continue;
     }
     const text = paragraphText(paragraph);
-    const unavailable = unavailableContent(paragraph, relationships);
-    if (text.trim().length === 0) {
+    const hasText = text.trim().length > 0;
+    const properties = wordChild(paragraph, "pPr");
+    const recognized = new Set<Element>();
+    for (const object of paragraph.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "object")) {
+      if (nearestAncestor(object, WORDPROCESSING_NAMESPACE, "p") !== paragraph ||
+        isDescendantOf(object, WORDPROCESSING_NAMESPACE, "del") ||
+        isDescendantOf(object, WORDPROCESSING_NAMESPACE, "txbxContent")) continue;
+      const part = attachmentPart(object, relationships, zip);
+      const objectIndex = objectIndexes.get(object);
+      if (part === undefined || objectIndex === undefined) continue;
+      markerPrefix ??= `_office-viewer-attachment-${crypto.randomUUID()}-`;
+      attachments.push({
+        ...part,
+        objectIndex,
+        marker: markerPrefix + objectIndex,
+        afterParagraphOrdinal: paragraphs.length + Number(hasText),
+        hasPreview: wordChild(object, "drawing") !== null,
+        centerPreview: object.getAttribute("officeViewerAttachmentCentered") === "true",
+      });
+      recognized.add(object);
+    }
+    const unavailable = unavailableContent(paragraph, relationships, recognized);
+    if (!hasText) {
       if (unavailable.length > 0) {
         unavailableBodyBlocks.push({
           afterParagraphOrdinal: paragraphs.length,
           kinds: unavailable,
         });
+      } else if (recognized.size === 0 && canRenderDocxBlankLine(paragraph)) {
+        const { lineHeight, spacing } = paragraphLayout(properties);
+        const lines = 1 + (text.match(/\n/g)?.length ?? 0);
+        const previous = blankLineHeights.get(paragraphs.length) ?? 0;
+        blankLineHeights.set(paragraphs.length, previous + Math.max(0, lineHeight) * lines + spacing);
       }
       continue;
     }
-    const properties = wordChild(paragraph, "pPr");
+    const { indents } = paragraphLayout(properties);
     const styleId = wordValue(properties, "pStyle");
-    const headingLevel = headings.level(properties, styleId);
+    const level = hasToc ? tocStyles.levelFor(styleId) : null;
+    const headingLevel = level === null ? headings.level(properties, styleId) : null;
+    const ordinal = paragraphs.length + 1;
+    const hyperlinks = paragraphHyperlinks(paragraph, relationships);
+    const number = listNumber?.(properties, styleId);
+    if (level !== null) {
+      const separator = text.lastIndexOf("\t");
+      const title = text.slice(0, separator).trim();
+      const page = text.slice(separator + 1).trim();
+      if (separator > 0 && title && /^(?:(?:[a-z]+-)?\d+(?:[-.]\d+)*|[ivxlcdm]+)$/i.test(page)) {
+        const bookmark = hyperlinks.find((link) => link.kind === "bookmark")?.bookmark ?? null;
+        tocRows.push({ ordinal, level, title, page, bookmark, leader: tocStyles.leaderFor(properties, styleId) });
+      }
+    }
     paragraphs.push({
-      ordinal: paragraphs.length + 1,
+      ordinal,
       text,
       searchText: text.toLocaleLowerCase(),
       styleId,
       headingLevel,
+      ...(headingLevel !== null && number ? { headingNumber: number } : {}),
+      ...(Object.keys(indents).length > 0 ? { indents } : {}),
       listItem: paragraphIsListItem(paragraph),
       tableDepth: tableDepth(paragraph),
       bookmarks: paragraphBookmarks(paragraph),
-      hyperlinks: paragraphHyperlinks(paragraph, relationships),
+      hyperlinks,
       inlineImageCount: inlineImageCount(paragraph, relationships),
       unavailableContent: unavailable,
     });
@@ -769,11 +945,24 @@ export async function inspectDocxPackage(
       bookmarkTargets.push({ bookmark, paragraphOrdinal });
     }
   }
+  const tocEntries = tocRows.map(({ ordinal, level, title, page, bookmark, leader }): DocxTocEntry => {
+    const targetOrdinal = bookmark === null ? null : bookmarkOwners.get(bookmark) ?? null;
+    const target = targetOrdinal === null ? undefined : paragraphs[targetOrdinal - 1];
+    const number = target !== undefined && target.headingLevel !== null &&
+      target.text.replace(/\s/g, "") === title.replace(/\s/g, "")
+      ? target.headingNumber ?? null : null;
+    return { paragraphOrdinal: ordinal, level, page, number, targetOrdinal, bookmark, leader };
+  });
 
   return {
     paragraphs,
     bookmarkTargets,
     unavailableBodyBlocks,
+    ...(attachments.length > 0 ? { attachments } : {}),
+    ...(tocEntries.length > 0 ? { tocEntries } : {}),
+    ...(blankLineHeights.size > 0 ? { blankLineHeights: Array.from(
+      blankLineHeights, ([afterParagraphOrdinal, twips]) => ({ afterParagraphOrdinal, twips }),
+    ) } : {}),
     hasUnavailableBodyContent:
       unavailableBodyBlocks.length > 0 ||
       paragraphs.some(
@@ -830,7 +1019,8 @@ async function convertEmbeddedWindowsMetafiles(
 export async function createSafeDocxRendererBuffer(
   buffer: ArrayBuffer,
   signal: AbortSignal,
-  prepareLayout?: (document: Document) => void,
+  prepareLayout?: (document: Document, styles: Document | null) => void,
+  attachments: readonly DocxAttachment[] = [],
 ): Promise<ArrayBuffer> {
   signal.throwIfAborted();
   let zip: JSZip;
@@ -843,6 +1033,28 @@ export async function createSafeDocxRendererBuffer(
   const documentPart = zip.file("word/document.xml");
   if (documentPart === null) throw malformed("Missing DOCX main document");
   const document = await readXml(documentPart, signal);
+  if (attachments.length > 0) {
+    const objects = Array.from(document.getElementsByTagNameNS(WORDPROCESSING_NAMESPACE, "object"));
+    for (const { objectIndex, marker, hasPreview } of attachments) {
+      const object = objects[objectIndex];
+      const paragraph = object === undefined ? null : nearestAncestor(object, WORDPROCESSING_NAMESPACE, "p");
+      if (object === undefined || paragraph === null) continue;
+      let insertion = object;
+      while (insertion.parentElement !== paragraph && insertion.parentElement !== null) {
+        insertion = insertion.parentElement;
+      }
+      const start = document.createElementNS(WORDPROCESSING_NAMESPACE, "w:bookmarkStart");
+      start.setAttributeNS(WORDPROCESSING_NAMESPACE, "w:id", String(1_000_000 + objectIndex));
+      start.setAttributeNS(WORDPROCESSING_NAMESPACE, "w:name", marker);
+      insertion.before(start);
+      const drawing = hasPreview ? wordChild(object, "drawing") : null;
+      if (drawing !== null) {
+        const preview = document.createElementNS(WORDPROCESSING_NAMESPACE, "w:r");
+        preview.append(drawing);
+        insertion.before(preview);
+      }
+    }
+  }
   const relationshipsPart = zip.file("word/_rels/document.xml.rels");
   const externalImageIds = new Set<string>();
   const removableRelationshipIds = new Set<string>();
@@ -857,7 +1069,12 @@ export async function createSafeDocxRendererBuffer(
       const type = relationship.getAttribute("Type");
       const external =
         relationship.getAttribute("TargetMode")?.toLowerCase() === "external";
-      if (id === null || !external) continue;
+      if (id === null) continue;
+      if (ATTACHMENT_RELATIONSHIPS.has(type ?? "")) {
+        removableRelationshipIds.add(id);
+        continue;
+      }
+      if (!external) continue;
       if (type === IMAGE_RELATIONSHIP) {
         externalImageIds.add(id);
         removableRelationshipIds.add(id);
@@ -969,16 +1186,14 @@ export async function createSafeDocxRendererBuffer(
     ).remove();
   }
   signal.throwIfAborted();
-  prepareLayout?.(document);
   if (prepareLayout !== undefined) {
-    const stylesPart = docxStylesPart(
-      zip, relationshipDocument === null ? new Map() : relationshipMap(relationshipDocument),
+    const stylesPart = docxRelatedPart(
+      zip, relationshipDocument === null ? new Map() : relationshipMap(relationshipDocument), "styles",
     );
-    if (stylesPart !== null) {
-      const styles = await readXml(stylesPart, signal);
-      if (orderDocxStylesForPreview(styles)) {
-        zip.file(stylesPart.name, new XMLSerializer().serializeToString(styles));
-      }
+    const styles = stylesPart === null ? null : await readXml(stylesPart, signal);
+    prepareLayout(document, styles);
+    if (stylesPart !== null && styles !== null && orderDocxStylesForPreview(styles)) {
+      zip.file(stylesPart.name, new XMLSerializer().serializeToString(styles));
     }
   }
   if (relationshipsPart !== null && relationshipDocument !== null) {

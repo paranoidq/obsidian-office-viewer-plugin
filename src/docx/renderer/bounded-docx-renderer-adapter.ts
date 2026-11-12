@@ -8,16 +8,21 @@ import type {
   DocxRendererSession,
 } from "./docx-renderer-adapter";
 import { markDocxHeading } from "./docx-renderer-adapter";
+import { createDocxAttachmentButton, DOCX_ATTACHMENT_STYLES } from "../docx-attachment-controls";
+import type { DocxAttachment } from "../docx-attachments";
+import { createDocxMessageTranslator, type DocxMessageTranslator } from "../docx-messages";
 import { createDocxZoom } from "./docx-wheel-zoom";
 
 export interface BoundedDocxRendererOptions {
   readonly windowSize: number;
   readonly unavailablePlaceholder: string;
+  readonly messages: DocxMessageTranslator;
 }
 
 const DEFAULT_OPTIONS: BoundedDocxRendererOptions = {
   windowSize: 240,
   unavailablePlaceholder: "This document content cannot be displayed.",
+  messages: createDocxMessageTranslator("en"),
 };
 
 function positiveInteger(value: number, name: string): number {
@@ -91,6 +96,10 @@ function paragraphElement(
     : (`h${heading}` as keyof HTMLElementTagNameMap);
   const element = createEl(tag);
   appendParagraphText(element, paragraph);
+  const { start, end, firstLine } = paragraph.indents ?? {};
+  if (start !== undefined) element.style.marginInlineStart = `${start / 20}pt`;
+  if (end !== undefined) element.style.marginInlineEnd = `${end / 20}pt`;
+  if (firstLine !== undefined) element.style.textIndent = `${firstLine / 20}pt`;
   element.dataset.docxParagraphOrdinal = String(paragraph.ordinal);
   if (paragraph.listItem) {
     element.classList.add("office-viewer-docx-bounded-list-item");
@@ -124,6 +133,7 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
       unavailablePlaceholder:
         options.unavailablePlaceholder ??
         DEFAULT_OPTIONS.unavailablePlaceholder,
+      messages: options.messages ?? DEFAULT_OPTIONS.messages,
     };
   }
 
@@ -160,6 +170,25 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
     root.append(topSpacer, window, bottomSpacer);
 
     const mounted = new Map<number, HTMLElement>();
+    const attachments = new Map<number, DocxAttachment[]>();
+    for (const attachment of model.attachments ?? []) {
+      const ordinal = attachment.afterParagraphOrdinal;
+      const atPosition = attachments.get(ordinal) ?? [];
+      atPosition.push(attachment);
+      attachments.set(ordinal, atPosition);
+    }
+    if (attachments.size > 0) {
+      const style = container.ownerDocument.createElement("style");
+      style.textContent = DOCX_ATTACHMENT_STYLES;
+      root.append(style);
+    }
+    const appendAttachments = (fragment: DocumentFragment, ordinal: number) => {
+      for (const attachment of attachments.get(ordinal) ?? []) {
+        fragment.append(createDocxAttachmentButton(
+          container.ownerDocument, attachment, this.options.messages,
+        ));
+      }
+    };
     const bodyBlocks = new Map<number, readonly string[]>();
     for (const block of model.unavailableBodyBlocks) {
       bodyBlocks.set(block.afterParagraphOrdinal, [
@@ -170,6 +199,23 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
     const count = model.paragraphs.length;
     const size = Math.min(this.options.windowSize, count);
     const estimatedParagraphHeight = 36;
+    const blankHeights = new Map((model.blankLineHeights ?? []).map(
+      ({ afterParagraphOrdinal, twips }) => [afterParagraphOrdinal, twips / 15] as const,
+    ));
+    const appendBlankLines = (fragment: DocumentFragment, ordinal: number) => {
+      const height = blankHeights.get(ordinal);
+      if (height === undefined || height === 0) return;
+      const blank = container.ownerDocument.createElement("div");
+      blank.setAttribute("aria-hidden", "true");
+      blank.style.height = `${height}px`;
+      fragment.append(blank);
+    };
+    const offsets = [0];
+    let offset = blankHeights.get(0) ?? 0;
+    for (let ordinal = 1; ordinal <= count; ordinal += 1) {
+      offset += estimatedParagraphHeight + (blankHeights.get(ordinal) ?? 0);
+      offsets.push(offset);
+    }
     let zoom = 1;
     let start = -1;
 
@@ -186,6 +232,10 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
         start = nextStart;
         mounted.clear();
         const fragment = createFragment();
+        if (start === 0) {
+          appendAttachments(fragment, 0);
+          appendBlankLines(fragment, 0);
+        }
         for (let index = start; index < start + size; index += 1) {
           const paragraph = model.paragraphs[index];
           if (paragraph === undefined) continue;
@@ -206,6 +256,7 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
           );
           mounted.set(paragraph.ordinal, element);
           fragment.append(element);
+          appendAttachments(fragment, paragraph.ordinal);
           const trailingKinds = bodyBlocks.get(paragraph.ordinal);
           if (trailingKinds !== undefined) {
             fragment.append(
@@ -215,19 +266,27 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
               ),
             );
           }
+          appendBlankLines(fragment, paragraph.ordinal);
         }
         window.replaceChildren(fragment);
         topSpacer.style.height =
-          `${start * estimatedParagraphHeight}px`;
+          `${offsets[start] ?? 0}px`;
         bottomSpacer.style.height =
-          `${Math.max(0, count - start - size) * estimatedParagraphHeight}px`;
+          `${(offsets[count] ?? 0) - (offsets[start + size] ?? 0)}px`;
       }
       return mounted.get(targetOrdinal) ?? null;
     };
 
     const onScroll = (): void => {
-      const approximateOrdinal =
-        Math.floor(container.scrollTop / (estimatedParagraphHeight * zoom)) + 1;
+      const scroll = container.scrollTop / zoom;
+      let low = 0;
+      let high = count;
+      while (low < high) {
+        const middle = Math.floor((low + high + 1) / 2);
+        if (offsets[middle]! <= scroll) low = middle;
+        else high = middle - 1;
+      }
+      const approximateOrdinal = low + 1;
       if (
         approximateOrdinal < start + Math.floor(size / 4) ||
         approximateOrdinal > start + Math.floor((size * 3) / 4)
@@ -256,7 +315,7 @@ export class BoundedDocxRendererAdapter implements DocxRendererAdapter {
           return null;
         }
         const element = renderWindow(ordinal);
-        container.scrollTop = (ordinal - 1) * estimatedParagraphHeight * zoom;
+        container.scrollTop = (offsets[ordinal - 1] ?? 0) * zoom;
         return element;
       },
       dispose: () => {

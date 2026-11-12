@@ -1,4 +1,6 @@
 import { createSafeDocxRendererBuffer, type DocxSemanticModel } from "./docx-semantic-model";
+import { extractDocxAttachment, UnsupportedDocxAttachment } from "./docx-attachments";
+import { prepareDocxPreviewParagraphs } from "./docx-paragraph-layout";
 import { prepareDocxPreviewPageTables } from "./renderer/docx-preview-page-layout";
 import type { DocxRenderMode, DocxRendererAdapter } from "./renderer/docx-renderer-adapter";
 
@@ -11,6 +13,12 @@ export class DocxRenderSource {
     readonly model: DocxSemanticModel,
   ) {}
 
+  async readAttachment(index: number) {
+    const attachment = this.model.attachments?.find(({ objectIndex }) => objectIndex === index);
+    if (attachment === undefined) throw new UnsupportedDocxAttachment();
+    return extractDocxAttachment(this.buffer, attachment);
+  }
+
   async open(
     renderer: DocxRendererAdapter,
     container: HTMLElement,
@@ -19,7 +27,10 @@ export class DocxRenderSource {
   ) {
     if (mode === "full" && !this.prepared) {
       const buffer = await createSafeDocxRendererBuffer(
-        this.buffer, signal, prepareDocxPreviewPageTables,
+        this.buffer, signal, (document, styles) => {
+          prepareDocxPreviewPageTables(document);
+          prepareDocxPreviewParagraphs(document, styles);
+        }, this.model.attachments,
       );
       signal.throwIfAborted();
       this.buffer = buffer;

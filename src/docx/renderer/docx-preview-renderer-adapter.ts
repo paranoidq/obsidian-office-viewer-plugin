@@ -1,4 +1,7 @@
 import { renderAsync } from "docx-preview";
+import { createDocxAttachmentButton, DOCX_ATTACHMENT_STYLES } from "../docx-attachment-controls";
+import { createDocxMessageTranslator } from "../docx-messages";
+import { DOCX_TOC_STYLES, layoutDocxTocEntry } from "./docx-preview-toc";
 import { DocxOpenError } from "../docx-open-error";
 import type { DocxSemanticModel } from "../docx-semantic-model";
 import {
@@ -46,7 +49,10 @@ function revealMappedOrUniqueText(
 }
 
 export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
-  constructor(private readonly pageLayout = false) {}
+  constructor(
+    private readonly pageLayout = false,
+    private readonly messages = createDocxMessageTranslator("en"),
+  ) {}
 
   async open(
     buffer: ArrayBuffer,
@@ -120,13 +126,35 @@ export class DocxPreviewRendererAdapter implements DocxRendererAdapter {
       const element = paragraphElements.get(paragraph.ordinal);
       if (element !== undefined) markDocxHeading(element, paragraph.headingLevel);
     }
+    if (model.attachments !== undefined) {
+      const markers = new Map(Array.from(content.querySelectorAll<HTMLElement>("[id]"),
+        (element) => [element.id, element] as const));
+      for (const attachment of model.attachments) {
+        const marker = markers.get(attachment.marker);
+        if (marker === undefined) continue;
+        const following = marker.nextElementSibling as HTMLElement | null;
+        const preview = attachment.hasPreview && following?.querySelector("img[src]")
+          ? following : undefined;
+        marker.replaceWith(createDocxAttachmentButton(
+          content.ownerDocument, attachment, this.messages, preview,
+        ));
+      }
+      const style = content.ownerDocument.createElement("style");
+      style.textContent = DOCX_ATTACHMENT_STYLES;
+      content.append(style);
+    }
     container.replaceChildren(staging);
     let pageLayout: ReturnType<typeof fitDocxPages>;
     if (this.pageLayout) {
       staging.classList.add("office-viewer-docx--paged");
+      for (const entry of model.tocEntries ?? []) {
+        const paragraph = paragraphElements.get(entry.paragraphOrdinal);
+        if (paragraph !== undefined) layoutDocxTocEntry(paragraph, entry);
+      }
       const style = container.ownerDocument.createElement("style");
       style.textContent = `
         :host { font: 11pt "Calibri", "Carlito", sans-serif; }
+        ${model.tocEntries === undefined ? "" : DOCX_TOC_STYLES}
         .docx p:where([data-docx-heading-level]) {
           font-size: var(--office-viewer-docx-heading-size);
           font-weight: 600;

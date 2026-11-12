@@ -29,6 +29,7 @@ import { PresentationCompanionNoteService } from "./presentation-companion-note-
 import { DocxFileView, DOCX_VIEW_TYPE } from "./docx/docx-file-view";
 import { createDocxMessageTranslator } from "./docx/docx-messages";
 import { createDocxRendererAdapter } from "./docx/renderer/create-docx-renderer-adapter";
+import { createDocxAttachmentOpener } from "./docx/open-docx-attachment";
 import { processOfficeFileEmbeds, type OfficeFileEmbedOptions } from "./office-file-embed";
 import { createLegacyOfficePreview, LegacyOfficeUnavailable } from "./legacy-office-preview";
 import { registerOfficeTabOpening } from "./office-tab-opening";
@@ -63,6 +64,7 @@ export default class OfficeViewerPlugin extends Plugin {
   private store: OfficeViewerDataStore | undefined;
   private companionNotes: PresentationCompanionNoteService | undefined;
   private embedScheduler: SlideEmbedScheduler | undefined;
+  private attachmentOpener: ReturnType<typeof createDocxAttachmentOpener> | undefined;
   private readonly embedChildren = new Set<MarkdownRenderChild>();
   private unloading = false;
 
@@ -184,8 +186,10 @@ export default class OfficeViewerPlugin extends Plugin {
     const docxMessages = createDocxMessageTranslator(language);
     const docxRenderer = createDocxRendererAdapter({
       pageLayout: true,
+      messages: docxMessages,
       unavailablePlaceholder: docxMessages.text("unavailablePlaceholder"),
     });
+    const attachmentOpener = this.attachmentOpener = createDocxAttachmentOpener();
     const openExternally = createExternalOpenAction(this.app);
     this.registerView(DOCX_VIEW_TYPE, (leaf) => {
       let view: DocxFileView;
@@ -196,6 +200,7 @@ export default class OfficeViewerPlugin extends Plugin {
           messages: docxMessages,
           readBinary: readPreviewBinary,
           openExternalUrl,
+          openAttachment: attachmentOpener.open,
           openInDefaultApplication:
             openExternally === undefined
               ? undefined
@@ -234,6 +239,7 @@ export default class OfficeViewerPlugin extends Plugin {
       },
       openExternally,
       openExternalUrl,
+      openAttachment: attachmentOpener.open,
       pptxRenderer: embedRenderer,
       docxRenderer,
       scheduler: embedScheduler,
@@ -282,6 +288,8 @@ export default class OfficeViewerPlugin extends Plugin {
 
   override onunload(): void {
     this.unloading = true;
+    void this.attachmentOpener?.dispose();
+    this.attachmentOpener = undefined;
     for (const view of [...this.views]) view.dispose();
     this.views.clear();
     for (const view of [...this.docxViews]) view.dispose();

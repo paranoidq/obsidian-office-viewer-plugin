@@ -136,6 +136,10 @@ containing sensitive content, filenames, paths, slide text, or images.
   over the preview also updates the zoom.
 - Open the Word preview's **Document outline** from the toolbar and click a
   heading to jump to its location.
+- Click a PDF or Office attachment icon in a Word preview to open a
+  temporary copy in the system's default application.
+  The macOS development build also recovers attachments from legacy `.doc`
+  files when the original preview position can be matched.
 - In Live Preview, put a whole-file embed or a canonical single-slide embed on
   its own line. Moving the cursor or selection onto the embed reveals the
   Markdown. Source mode always shows syntax.

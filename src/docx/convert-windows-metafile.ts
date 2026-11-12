@@ -38,7 +38,7 @@ function decodePossiblyGbk(value: string): string {
   }
 }
 
-function pngBytesFromDataUrl(dataUrl: string): Uint8Array | null {
+export function pngBytesFromDataUrl(dataUrl: string): Uint8Array | null {
   const marker = "base64,";
   const index = dataUrl.indexOf(marker);
   if (index < 0) return null;

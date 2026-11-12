@@ -11,6 +11,8 @@ import {
   decorateOfficeViewerIconButton,
 } from "../office-viewer-chrome";
 import { registerOfficeEmbedTextCopy } from "../office-embed-text-copy";
+import { registerDocxAttachmentOpening } from "./docx-attachment-controls";
+import type { DocxAttachmentFile } from "./docx-attachments";
 import type {
   DocxMessageTranslator,
 } from "./docx-messages";
@@ -38,6 +40,7 @@ export interface DocxViewDependencies {
   readonly messages: DocxMessageTranslator;
   readonly readBinary?: (file: TFile, signal: AbortSignal) => Promise<ArrayBuffer>;
   readonly openExternalUrl?: (url: string) => Promise<void>;
+  readonly openAttachment?: (file: DocxAttachmentFile) => Promise<void>;
   readonly openInDefaultApplication?: (file: TFile) => Promise<void>;
 }
 
@@ -95,6 +98,7 @@ export class DocxFileView extends FileView {
   private activeParagraph: DocxSemanticParagraph | null = null;
   private activeParagraphElement: HTMLElement | null = null;
   private readonly unregisterTextCopy: () => void;
+  private readonly unregisterAttachmentOpening: () => void;
   private abortController: AbortController | null = null;
   private disposed = false;
   private diagnostics: DocxViewPerformanceDiagnostics = {
@@ -148,6 +152,10 @@ export class DocxFileView extends FileView {
     this.readingBody.className = "office-viewer-docx-reading-body";
     this.readingBody.setAttribute("role", "document");
     this.unregisterTextCopy = registerOfficeEmbedTextCopy(this.readingBody);
+    this.unregisterAttachmentOpening = registerDocxAttachmentOpening(
+      this.readingBody, () => this.renderSource, dependencies.openAttachment,
+      dependencies.messages, this.actionStatus,
+    );
 
     this.searchPanel = new DocxSearchPanel(this.root, this.searchRail, {
       messages: dependencies.messages,
@@ -339,6 +347,7 @@ export class DocxFileView extends FileView {
     this.abortController = null;
     this.searchPanel.dispose();
     this.unregisterTextCopy();
+    this.unregisterAttachmentOpening();
     this.zoomControls.setZoom();
     this.outline.setModel();
     this.rendererSession?.dispose();
@@ -496,10 +505,20 @@ export class DocxFileView extends FileView {
       }
       return;
     }
-    if (event.type !== "click") return;
     const bookmark = target.closest<HTMLElement>("[data-docx-bookmark]");
     if (bookmark !== null) {
       event.preventDefault();
+      if (event.type !== "click") return;
+      const tocTarget = bookmark.dataset.docxTocTarget;
+      if (tocTarget !== undefined) {
+        const heading = this.rendererSession?.revealParagraph(Number(tocTarget));
+        if (heading == null) this.actionStatus.textContent = this.dependencies.messages.text("bookmarkUnavailable");
+        else {
+          this.setActiveParagraph(null);
+          scrollToDocxHeading(this.readingBody, heading);
+        }
+        return;
+      }
       const name = bookmark.dataset.docxBookmark ?? "";
       const targets =
         this.model?.bookmarkTargets.filter(

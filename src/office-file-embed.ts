@@ -1,5 +1,7 @@
 import { MarkdownRenderChild, type MarkdownPostProcessorContext } from "obsidian";
 import type { DocxMessageTranslator } from "./docx/docx-messages";
+import { registerDocxAttachmentOpening } from "./docx/docx-attachment-controls";
+import type { DocxAttachmentFile } from "./docx/docx-attachments";
 import { createDocxModeButton } from "./docx/docx-mode-button";
 import { createDocxOutline, scrollToDocxHeading } from "./docx/docx-outline";
 import { DocxRenderSource } from "./docx/docx-render-source";
@@ -29,6 +31,7 @@ export interface OfficeFileEmbedOptions<TFile> {
   readonly openInTab: (file: TFile) => Promise<void>;
   readonly openExternally?: (file: TFile) => Promise<void>;
   readonly openExternalUrl: (url: string) => Promise<void>;
+  readonly openAttachment?: (file: DocxAttachmentFile) => Promise<void>;
   readonly pptxRenderer: PptxRendererAdapter;
   readonly docxRenderer: DocxRendererAdapter;
   readonly scheduler: SlideEmbedScheduler;
@@ -121,6 +124,9 @@ export function mountOfficeFileEmbed<TFile>(
   let cancel: (() => void) | undefined;
   let disposed = false;
   let docxSource: DocxRenderSource | undefined;
+  const unregisterAttachmentOpening = format === "docx"
+    ? registerDocxAttachmentOpening(body, () => docxSource, options.openAttachment, docxMessages, actionStatus)
+    : undefined;
   let renderedDocxMode: DocxRenderMode | undefined;
   const showStatus = (message: string) => { status.textContent = message; };
   const loading = format === "pptx" ? messages.text("viewer.loading") : docxMessages.text("loading");
@@ -257,6 +263,13 @@ export function mountOfficeFileEmbed<TFile>(
       event.preventDefault();
       event.stopPropagation();
       if (event.type !== "click") return;
+      const tocTarget = link.dataset.docxTocTarget;
+      if (tocTarget !== undefined) {
+        const heading = docxSession?.revealParagraph(Number(tocTarget));
+        if (heading == null) actionStatus.textContent = docxMessages.text("bookmarkUnavailable");
+        else scrollToDocxHeading(body, heading);
+        return;
+      }
       void options.openExternalUrl(link.getAttribute("href") ?? "").catch(() => {
         actionStatus.textContent = docxMessages.text("blockedLink");
       });
@@ -267,6 +280,7 @@ export function mountOfficeFileEmbed<TFile>(
   return () => {
     disposed = true;
     unregisterTextCopy();
+    unregisterAttachmentOpening?.();
     stopObserving();
     cancel?.();
     zoomControls?.setZoom();

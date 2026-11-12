@@ -18,6 +18,10 @@ in Obsidian Community Plugins.
   package checks.
 - External hyperlinks are not followed automatically; DOCX links are limited
   to `http`, `https`, and `mailto` after an explicit click.
+- DOCX attachment buttons extract supported document data to a private
+  temporary directory after an explicit open action. The viewer checks the
+  extracted format and passes a generated local file path to the default app.
+  Linked OLE objects and embedded executable commands are excluded.
 - Source files are read-only and are never modified by the viewer.
 - Rendering is isolated per Obsidian view and cancellation/disposal is scoped
   to the open generation.
